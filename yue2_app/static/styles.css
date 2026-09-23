@@ -444,58 +444,37 @@ body.is-playing #queue-view {
   top: 50%;
   left: 50%;
   border-radius: 50%;
-  filter: blur(100px);
+  filter: blur(95px);
   mix-blend-mode: screen;
-  will-change: transform, opacity;
+  will-change: transform, opacity, filter;
   pointer-events: none;
 }
 
-/* 1번 오르브: 신비로운 딥 일렉트릭 바이올렛 / 퍼플 */
+/* 1번 오르브: Suno 특유의 신비로운 딥 일렉트릭 바이올렛 / 퍼플 */
 .ambient-orb-1 {
-  width: 960px;
-  height: 960px;
+  width: 920px;
+  height: 920px;
   background: radial-gradient(circle, #6c15f5 0%, #3e0da8 45%, transparent 72%);
-  opacity: .55;
+  opacity: .65;
   transform: translate(-50%, -50%) translate(-25vw, -22vh);
-  animation: orb-float-1 22s ease-in-out infinite alternate;
 }
 
-/* 2번 오르브: 타오르는 엠버 오렌지 & 핫 마젠타 */
+/* 2번 오르브: Suno 특유의 타오르는 엠버 오렌지 & 핫 마젠타 */
 .ambient-orb-2 {
-  width: 900px;
-  height: 900px;
+  width: 880px;
+  height: 880px;
   background: radial-gradient(circle, #ff4e00 0%, #e01275 48%, transparent 70%);
-  opacity: .50;
+  opacity: .60;
   transform: translate(-50%, -50%) translate(25vw, 22vh);
-  animation: orb-float-2 26s ease-in-out infinite alternate;
 }
 
 /* 3번 오르브: 재생 중인 곡 고유 컬러 블룸 (Dynamic Accent) */
 .ambient-orb-3 {
-  width: 860px;
-  height: 860px;
+  width: 820px;
+  height: 820px;
   background: radial-gradient(circle, var(--art-a, #ff6b35) 0%, var(--art-b, #4a154b) 50%, transparent 72%);
-  opacity: .45;
+  opacity: .55;
   transform: translate(-50%, -50%) translate(4vw, -4vh);
-  animation: orb-float-3 18s ease-in-out infinite alternate;
-}
-
-@keyframes orb-float-1 {
-  0% { transform: translate(-50%, -50%) translate(-25vw, -22vh) scale(1); }
-  50% { transform: translate(-50%, -50%) translate(-20vw, -28vh) scale(1.08); }
-  100% { transform: translate(-50%, -50%) translate(-30vw, -16vh) scale(0.95); }
-}
-
-@keyframes orb-float-2 {
-  0% { transform: translate(-50%, -50%) translate(25vw, 22vh) scale(1); }
-  50% { transform: translate(-50%, -50%) translate(30vw, 16vh) scale(1.06); }
-  100% { transform: translate(-50%, -50%) translate(18vw, 26vh) scale(0.94); }
-}
-
-@keyframes orb-float-3 {
-  0% { transform: translate(-50%, -50%) translate(4vw, -4vh) scale(1); }
-  50% { transform: translate(-50%, -50%) translate(-6vw, 6vh) scale(1.1); }
-  100% { transform: translate(-50%, -50%) translate(10vw, -10vh) scale(0.92); }
 }
 
 /* Suno 특유의 자글거리는 시네마틱 스파클 / 필름 그레인 텍스처 오버레이 */
