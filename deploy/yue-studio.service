@@ -1,0 +1,19 @@
+[Unit]
+Description=YuE Studio web application
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/services/yue-studio
+EnvironmentFile=/home/ubuntu/services/yue-studio/secrets/studio.env
+ExecStart=/home/ubuntu/services/yue-studio/venv/bin/python -m yue2_app.server
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

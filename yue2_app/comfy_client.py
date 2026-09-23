@@ -191,7 +191,8 @@ class ComfyClient:
             form.add_field("type", "input")
             form.add_field("overwrite", "false")
             try:
-                async with session.post(f"{self.base_url}/upload/image", data=form, timeout=self.timeout) as response:
+                upload_timeout = aiohttp.ClientTimeout(total=None, connect=10, sock_read=120)
+                async with session.post(f"{self.base_url}/upload/image", data=form, timeout=upload_timeout) as response:
                     if response.status < 200 or response.status >= 300:
                         raise ComfyResponseError(response.status)
                     data = await response.json(content_type=None)

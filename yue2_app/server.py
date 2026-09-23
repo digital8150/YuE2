@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import math
 import mimetypes
 import os
 import hmac
+import hashlib
 import secrets
 import random
 import re
@@ -31,6 +33,7 @@ from .comfy_client import (
 from .repository import Job, Repository
 from .audio_metadata import prompt_from_mp3, recipe_from_prompt
 from .workflow_builder import build_workflow
+from .dispatch import DispatchStore
 
 
 HOST = os.environ.get("YUE2_HOST", "127.0.0.1")
@@ -421,6 +424,8 @@ def _may_read(job: Job, user: User | None) -> bool:
 
 
 async def _sync_job(app: web.Application, job: Job) -> Job:
+    if app.get("dispatch") is not None:
+        return job
     if job.status in {"completed", "failed", "cancelled"} or not job.prompt_id:
         return job
     client: ComfyClient = app["comfy"]
@@ -471,6 +476,8 @@ async def _sync_job(app: web.Application, job: Job) -> Job:
 
 
 async def _sync_all(app: web.Application) -> None:
+    if app.get("dispatch") is not None:
+        return
     repository: Repository = app["repository"]
     for job in repository.list_nonterminal():
         await _sync_job(app, job)
@@ -559,6 +566,27 @@ async def _flush_progress(app: web.Application) -> None:
 async def _reconcile_jobs(app: web.Application) -> None:
     while True:
         await asyncio.sleep(5)
+        if app.get("dispatch") is not None:
+            for job_id in app["dispatch"].expired():
+                app["repository"].set_status(job_id, "failed", GENERIC_GENERATION_ERROR)
+                _remove_source(app, job_id)
+                job = app["repository"].get_job(job_id)
+                if job:
+                    await _broadcast_job(app, job)
+            for job_id, status, output_filename in app["dispatch"].terminal():
+                job = app["repository"].get_job(job_id)
+                if job is None or job.status in {"completed", "failed", "cancelled"}:
+                    continue
+                if status == "completed":
+                    filename = output_filename or job_id + ".mp3"
+                    if (app["output_dir"] / filename).is_file():
+                        app["repository"].set_output(job_id, filename=filename)
+                else:
+                    app["repository"].set_status(job_id, "failed", GENERIC_GENERATION_ERROR)
+                updated = app["repository"].get_job(job_id)
+                if updated:
+                    await _broadcast_job(app, updated)
+            continue
         for job_id in tuple(app["prompt_jobs"].values()):
             job = app["repository"].get_job(job_id)
             if job is not None:
@@ -587,6 +615,8 @@ async def job_events(request: web.Request) -> web.StreamResponse:
 
 
 async def health(request: web.Request) -> web.Response:
+    if request.app.get("dispatch") is not None:
+        return web.json_response({"app": "ok", "engine": "online" if request.app["dispatch"].workers() else "offline"})
     client: ComfyClient = request.app["comfy"]
     stats = await client.system_stats()
     return web.json_response({"app": "ok", "engine": "online" if stats is not None else "offline"})
@@ -799,7 +829,7 @@ async def access_control(request: web.Request, handler):
             return _error("허용되지 않은 출처입니다.", 403)
         if request.headers.get("Sec-Fetch-Site") == "cross-site" and not _is_allowed_origin(request, origin):
             return _error("허용되지 않은 출처입니다.", 403)
-    if not path.startswith("/api/") or path in {"/api/auth/register", "/api/auth/login", "/api/auth/setup-status", "/api/auth/setup", "/api/auth/me"}:
+    if not path.startswith("/api/") or path.startswith("/api/worker/") or path in {"/api/auth/register", "/api/auth/login", "/api/auth/setup-status", "/api/auth/setup", "/api/auth/me"}:
         return await handler(request)
     public_library_path = request.method in {"GET", "HEAD"} and (
         path in {"/api/library", "/api/library/discover", "/api/library/charts"}
@@ -828,6 +858,9 @@ async def create_generation(request: web.Request) -> web.Response:
         generation = await _parse_generation_request(request)
     except RequestInputError as error:
         return _error(str(error) or INPUT_ERROR, 400)
+
+    if request.app.get("dispatch") is not None:
+        return await _create_distributed_generation(request, generation)
 
     job_id = str(uuid.uuid4())
     upload_result: dict[str, Any] | None = None
@@ -895,6 +928,171 @@ async def create_generation(request: web.Request) -> web.Response:
     return web.json_response(_public_job(job, client), status=202)
 
 
+async def _create_distributed_generation(request: web.Request, generation: GenerationInput) -> web.Response:
+    app = request.app
+    job_id = str(uuid.uuid4())
+    source_name = None
+    if generation.source_path:
+        source_name = job_id + Path(generation.source_filename or "source.mp3").suffix.lower()
+        try:
+            os.replace(generation.source_path, app["source_dir"] / source_name)
+        except OSError:
+            Path(generation.source_path).unlink(missing_ok=True)
+            return _error(OFFLINE_ERROR, 500)
+    try:
+        job = app["repository"].create_job(
+            job_id=job_id, prompt_id=None, mode=generation.mode, title=generation.title,
+            style=generation.style, lyrics=generation.lyrics, seed=generation.seed,
+            settings=generation.settings, source_filename=generation.source_filename,
+            creator_id=request["user"].id,
+            creator_name=f"{request['user'].display_name} (@{request['user'].username})",
+        )
+        app["dispatch"].enqueue(job_id, {
+            "mode": generation.mode, "style": generation.style, "lyrics": generation.lyrics,
+            "seed": generation.seed, "settings": generation.settings,
+            "source_filename": generation.source_filename, "source_name": source_name,
+        })
+    except Exception:
+        if source_name:
+            (app["source_dir"] / source_name).unlink(missing_ok=True)
+        try:
+            app["repository"].set_status(job_id, "failed", GENERIC_GENERATION_ERROR)
+        except Exception:
+            pass
+        return _error(OFFLINE_ERROR, 503)
+    await _broadcast_job(app, job)
+    return web.json_response(_public_job(job), status=202)
+
+
+def _worker_identity(request: web.Request) -> str | None:
+    worker_id = request.headers.get("X-Yue-Worker", "")
+    token = request.headers.get("Authorization", "").removeprefix("Bearer ")
+    expected = request.app["worker_tokens"].get(worker_id)
+    if not expected or not hmac.compare_digest(token, expected):
+        return None
+    return worker_id
+
+
+def _remove_source(app: web.Application, job_id: str) -> None:
+    try:
+        uuid.UUID(job_id)
+    except ValueError:
+        return
+    for path in app["source_dir"].glob(job_id + ".*"):
+        path.unlink(missing_ok=True)
+
+
+async def worker_claim(request: web.Request) -> web.Response:
+    worker_id = _worker_identity(request)
+    if worker_id is None:
+        return _error("Unauthorized worker", 401)
+    try:
+        info = await request.json()
+    except Exception:
+        info = {}
+    if not isinstance(info, dict):
+        info = {}
+    claimed = request.app["dispatch"].claim(worker_id, str(info.get("device") or ""), str(info.get("vram") or ""))
+    if claimed is None:
+        return web.json_response({"job": None})
+    request.app["repository"].set_status(claimed["job_id"], "running")
+    job = request.app["repository"].get_job(claimed["job_id"])
+    if job:
+        await _broadcast_job(request.app, job)
+    claimed["source_url"] = f"/api/worker/jobs/{claimed['job_id']}/source" if claimed["payload"].get("source_name") else None
+    return web.json_response({"job": claimed})
+
+
+async def worker_source(request: web.Request) -> web.StreamResponse:
+    worker_id = _worker_identity(request)
+    if worker_id is None:
+        return _error("Unauthorized worker", 401)
+    job_id = request.match_info["job_id"]
+    token = request.headers.get("X-Yue-Lease", "")
+    if not request.app["dispatch"].heartbeat(job_id, worker_id, token):
+        return _error("Expired lease", 409)
+    path = next(request.app["source_dir"].glob(job_id + ".*"), None)
+    if path is None or not path.is_file():
+        return _error("Source missing", 404)
+    return web.FileResponse(path)
+
+
+async def worker_heartbeat(request: web.Request) -> web.Response:
+    worker_id = _worker_identity(request)
+    if worker_id is None:
+        return _error("Unauthorized worker", 401)
+    try:
+        data = await request.json()
+    except Exception:
+        return _error("Invalid progress", 400)
+    job_id = str(data.get("job_id") or "")
+    token = str(data.get("lease_token") or "")
+    progress = data.get("progress")
+    if progress is not None and not isinstance(progress, dict):
+        return _error("Invalid progress", 400)
+    if not request.app["dispatch"].heartbeat(job_id, worker_id, token, progress):
+        return _error("Expired lease", 409)
+    if progress:
+        request.app["pending_progress"][job_id] = progress
+    return web.json_response({"ok": True})
+
+
+async def worker_complete(request: web.Request) -> web.Response:
+    worker_id = _worker_identity(request)
+    if worker_id is None:
+        return _error("Unauthorized worker", 401)
+    job_id = request.match_info["job_id"]
+    token = request.headers.get("X-Yue-Lease", "")
+    if not request.app["dispatch"].heartbeat(job_id, worker_id, token):
+        return _error("Expired lease", 409)
+    filename = job_id + "_" + hashlib.sha256(token.encode()).hexdigest()[:16] + ".mp3"
+    temporary = request.app["output_dir"] / (filename + "." + uuid.uuid4().hex + ".part")
+    size = 0
+    try:
+        with temporary.open("wb") as output:
+            async for chunk in request.content.iter_chunked(1024 * 1024):
+                size += len(chunk)
+                if size > 256 * 1024 * 1024:
+                    return _error("Output too large", 413)
+                output.write(chunk)
+        if size < 1024:
+            return _error("Empty output", 400)
+        if not request.app["dispatch"].heartbeat(job_id, worker_id, token):
+            return _error("Expired lease", 409)
+        os.replace(temporary, request.app["output_dir"] / filename)
+        if not request.app["dispatch"].finish(job_id, worker_id, token, "completed", filename):
+            (request.app["output_dir"] / filename).unlink(missing_ok=True)
+            return _error("Expired lease", 409)
+        request.app["repository"].set_output(job_id, filename=filename)
+        _remove_source(request.app, job_id)
+        job = request.app["repository"].get_job(job_id)
+        if job:
+            await _broadcast_job(request.app, job)
+        return web.json_response({"ok": True})
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+async def worker_fail(request: web.Request) -> web.Response:
+    worker_id = _worker_identity(request)
+    if worker_id is None:
+        return _error("Unauthorized worker", 401)
+    job_id = request.match_info["job_id"]
+    try:
+        data = await request.json()
+    except Exception:
+        return _error("Invalid failure report", 400)
+    token = str(data.get("lease_token") or "")
+    if not request.app["dispatch"].finish(job_id, worker_id, token, "failed"):
+        return _error("Expired lease", 409)
+    request.app["repository"].set_status(job_id, "failed", GENERIC_GENERATION_ERROR)
+    _remove_source(request.app, job_id)
+    job = request.app["repository"].get_job(job_id)
+    if job:
+        await _broadcast_job(request.app, job)
+    return web.json_response({"ok": True})
+
+
 async def list_jobs(request: web.Request) -> web.Response:
     await _sync_all(request.app)
     raw_limit = request.query.get("limit", "20")
@@ -947,7 +1145,7 @@ async def get_queue_status(request: web.Request) -> web.Response:
     queue_data: dict[str, Any] = {}
     try:
         queue_func = getattr(client, "queue", None)
-        if callable(queue_func):
+        if request.app.get("dispatch") is None and callable(queue_func):
             queue_data = await queue_func() or {}
     except Exception:
         queue_data = {}
@@ -993,7 +1191,7 @@ async def get_queue_status(request: web.Request) -> web.Response:
     engine_status = "offline"
     try:
         stats_func = getattr(client, "system_stats", None)
-        if callable(stats_func):
+        if request.app.get("dispatch") is None and callable(stats_func):
             system_stats = await stats_func()
             if system_stats is not None:
                 engine_status = "busy" if (running_list or pending_list) else "idle"
@@ -1012,6 +1210,12 @@ async def get_queue_status(request: web.Request) -> web.Response:
                 total = dev.get("vram_total")
                 if free is not None and total is not None:
                     vram_summary = f"{round(free / (1024**3), 1)}GB / {round(total / (1024**3), 1)}GB"
+
+    workers = request.app["dispatch"].workers() if request.app.get("dispatch") is not None else []
+    if workers:
+        engine_status = "busy" if running_list else "idle"
+        device_name = workers[0]["device"]
+        vram_summary = workers[0]["vram"]
 
     recent_jobs = [
         _public_job(j, client)
@@ -1134,6 +1338,18 @@ async def track_recipe(request: web.Request) -> web.Response:
     job = request.app["repository"].get_job(request.match_info["job_id"])
     if job is None or not job.published_at or job.status != "completed" or not job.output_filename:
         return _error("공개된 음악을 찾을 수 없습니다.", 404)
+    if request.app.get("dispatch") is not None:
+        path = request.app["output_dir"] / Path(job.output_filename).name
+        if not path.is_file():
+            return _error(OFFLINE_ERROR, 502)
+        with path.open("rb") as audio:
+            data = audio.read(4 * 1024 * 1024)
+        graph = prompt_from_mp3(data)
+        recipe = recipe_from_prompt(graph) if graph else None
+        if recipe is None:
+            return _error("Recipe not found", 422)
+        recipe["title"] = job.published_title or job.title or ""
+        return web.json_response(recipe)
     try:
         upstream = await request.app["comfy"].open_view(
             job.output_filename, job.output_subfolder, job.output_type,
@@ -1401,6 +1617,18 @@ async def _track_response(request: web.Request, download: bool) -> web.StreamRes
     job = await _sync_job(request.app, job)
     if job.status != "completed" or not job.output_filename:
         return _error("트랙을 찾을 수 없습니다.", 404)
+    if request.app.get("dispatch") is not None:
+        path = request.app["output_dir"] / Path(job.output_filename).name
+        if not path.is_file():
+            return _error("Audio missing", 404)
+        headers = {"Content-Type": "audio/mpeg"}
+        if download:
+            download_name = _sanitize_download_name(job.published_title if job.published_at else job.title)
+            ascii_stem = download_name[:-4].encode("ascii", "ignore").decode("ascii").strip(" ._")
+            headers["Content-Disposition"] = (
+                f'attachment; filename="{ascii_stem or "track"}.mp3"; filename*=UTF-8\'\'{quote(download_name)}'
+            )
+        return web.FileResponse(path, headers=headers)
     client: ComfyClient = request.app["comfy"]
     try:
         upstream = await client.open_view(
@@ -1492,14 +1720,27 @@ def create_app(
     static_dir: str | Path | None = None,
     auth_store: AuthStore | None = None,
     setup_token: str | None = None,
+    dispatch_store: DispatchStore | None = None,
 ) -> web.Application:
     app = web.Application(client_max_size=MAX_UPLOAD_BYTES + 4 * 1024 * 1024, middlewares=[access_control])
+    database_url = os.environ.get("YUE2_DATABASE_URL")
+    if database_url and repository is None:
+        from .pg_store import PostgresRepository
+
+        repository = PostgresRepository(database_url, Path(__file__).parent / "data")
+    if database_url and auth_store is None:
+        from .pg_store import PostgresAuthStore
+
+        auth_store = PostgresAuthStore(database_url, Path(__file__).parent / "data" / "yue2.sqlite3")
     app["repository"] = repository or Repository(db_path)
     app["auth"] = auth_store or AuthStore(app["repository"].path)
     app["setup_token"] = setup_token or os.environ.get("YUE2_SETUP_TOKEN") or secrets.token_urlsafe(24)
     app["secure_cookies"] = os.environ.get("YUE2_SECURE_COOKIES") == "1"
     app["public_origin"] = os.environ.get("YUE2_PUBLIC_ORIGIN", "").rstrip("/")
     app["comfy"] = comfy_client or ComfyClient(comfy_url)
+    dispatch_dsn = os.environ.get("YUE2_DISPATCH_DSN")
+    app["dispatch"] = dispatch_store or (DispatchStore(dispatch_dsn) if dispatch_dsn else None)
+    app["worker_tokens"] = json.loads(os.environ.get("YUE2_WORKER_TOKENS", "{}"))
     app["client_id"] = str(uuid.uuid4())
     app["event_sockets"] = {}
     app["pending_progress"] = {}
@@ -1509,8 +1750,18 @@ def create_app(
     app["static_dir"] = Path(static_dir) if static_dir is not None else Path(__file__).parent / "static"
     app["cover_dir"] = app["repository"].path.parent / "covers"
     app["cover_dir"].mkdir(parents=True, exist_ok=True)
+    app["source_dir"] = app["repository"].path.parent / "sources"
+    app["output_dir"] = app["repository"].path.parent / "outputs"
+    app["source_dir"].mkdir(parents=True, exist_ok=True)
+    app["output_dir"].mkdir(parents=True, exist_ok=True)
 
     app.router.add_get("/api/health", health)
+    if app["dispatch"] is not None:
+        app.router.add_post("/api/worker/claim", worker_claim)
+        app.router.add_get("/api/worker/jobs/{job_id}/source", worker_source)
+        app.router.add_post("/api/worker/heartbeat", worker_heartbeat)
+        app.router.add_post("/api/worker/jobs/{job_id}/complete", worker_complete)
+        app.router.add_post("/api/worker/jobs/{job_id}/fail", worker_fail)
     app.router.add_post("/api/auth/register", register)
     app.router.add_get("/api/auth/setup-status", setup_status)
     app.router.add_post("/api/auth/setup", setup_admin)
@@ -1553,6 +1804,10 @@ def create_app(
 
     async def startup(application: web.Application) -> None:
         client = application["comfy"]
+        if application.get("dispatch") is not None:
+            application["progress_flush_task"] = asyncio.create_task(_flush_progress(application))
+            application["reconcile_task"] = asyncio.create_task(_reconcile_jobs(application))
+            return
         application["prompt_jobs"].update(
             {job.prompt_id: job.id for job in application["repository"].list_nonterminal() if job.prompt_id}
         )
@@ -1582,8 +1837,15 @@ def create_app(
             task.cancel()
         if finish_tasks:
             await asyncio.gather(*finish_tasks, return_exceptions=True)
-        for socket in tuple(application["event_sockets"]):
-            await socket.close()
+        sockets = tuple(application["event_sockets"])
+        if sockets:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*(socket.close() for socket in sockets), return_exceptions=True),
+                    timeout=5,
+                )
+            except asyncio.TimeoutError:
+                pass
         client = application["comfy"]
         if isinstance(client, ComfyClient):
             client.event_listener = None
@@ -1604,7 +1866,7 @@ def main() -> None:
     app = create_app()
     if not app["auth"].has_admin():
         print(f"\nYUE STUDIO 최초 관리자 설정 코드: {app['setup_token']}\n", flush=True)
-    web.run_app(app, host=HOST, port=PORT)
+    web.run_app(app, host=HOST, port=PORT, shutdown_timeout=5)
 
 
 if __name__ == "__main__":  # pragma: no cover

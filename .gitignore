@@ -17,6 +17,11 @@ ComfyUI/
 # Studio Database & Backups
 yue2_app/data/*.sqlite3*
 yue2_app/data/covers/
+yue2_app/data/sources/
+yue2_app/data/outputs/
+yue2_app/data/*.log
+.yue2-worker.local.bat
+.yue2-deploy-secrets.json
 !yue2_app/data/.gitkeep
 
 # Operating System files

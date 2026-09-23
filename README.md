@@ -1,5 +1,7 @@
 # YuE2 Studio
 
+Oracle 서버 및 GPU 워커 운영 방법: [DEPLOYMENT.md](DEPLOYMENT.md)
+
 YuE2 Studio는 승인된 동아리원이 음악을 만들고 결과를 공유하는 웹앱입니다.
 Python `aiohttp` 서버가 ComfyUI와 SQLite를 연결하고, 브라우저 화면은 HTML/CSS/JavaScript로 동작합니다.
 각 회원의 작업은 내 스튜디오에 보관되고, 선택해 공개한 곡만 공용 라이브러리에 나타납니다.

@@ -390,8 +390,8 @@ class Repository:
             connection.execute("""INSERT INTO artist_profiles (id, user_id, artist_name, bio, avatar_filename, banner_filename, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
                 artist_name = excluded.artist_name, bio = excluded.bio,
-                avatar_filename = COALESCE(excluded.avatar_filename, avatar_filename),
-                banner_filename = COALESCE(excluded.banner_filename, banner_filename),
+                avatar_filename = COALESCE(excluded.avatar_filename, artist_profiles.avatar_filename),
+                banner_filename = COALESCE(excluded.banner_filename, artist_profiles.banner_filename),
                 updated_at = excluded.updated_at""", (artist_id, user_id, name, bio, avatar, banner, utc_now()))
         return self.get_artist(artist_id)
 
@@ -445,7 +445,7 @@ class Repository:
             rows = connection.execute(f"""SELECT a.*, COUNT(j.id) AS track_count,
                 MAX(j.published_at) AS published_at FROM albums a
                 LEFT JOIN jobs j ON j.album_id = a.id AND j.published_at IS NOT NULL AND j.status = 'completed'
-                WHERE {where} GROUP BY a.id ORDER BY COALESCE(published_at, a.created_at) DESC LIMIT ?""", values).fetchall()
+                WHERE {where} GROUP BY a.id ORDER BY COALESCE(MAX(j.published_at), a.created_at) DESC LIMIT ?""", values).fetchall()
         return [dict(row) for row in rows]
 
     def list_album_tracks(self, album_id: str) -> list[Job]:
@@ -469,7 +469,7 @@ class Repository:
                    WHERE id = ? AND (creator_id = ? OR (creator_id IS NULL AND ?))
                    AND status = 'completed' AND output_filename IS NOT NULL""",
                 (title, cover_filename, album_id, creator_id if artist_id is None else artist_id,
-                 utc_now(), utc_now(), job_id, creator_id, int(allow_legacy)),
+                 utc_now(), utc_now(), job_id, creator_id, allow_legacy),
             )
         return self.get_job(job_id)
 
@@ -478,7 +478,7 @@ class Repository:
             result = connection.execute(
                 """UPDATE jobs SET published_at = NULL, updated_at = ? WHERE id = ?
                    AND (creator_id = ? OR (creator_id IS NULL AND ?)) AND published_at IS NOT NULL""",
-                (utc_now(), job_id, creator_id, int(allow_legacy)),
+                (utc_now(), job_id, creator_id, allow_legacy),
             )
         return result.rowcount > 0
 
