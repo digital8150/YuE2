@@ -1,0 +1,2197 @@
+(() => {
+  "use strict";
+
+  const $ = (selector, root = document) => root.querySelector(selector);
+  const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+
+  const refs = {
+    createView: $("#create-view"),
+    libraryView: $("#library-view"),
+    composerForm: $("#composer-form"),
+    modeOptions: $$('[data-mode-option]'),
+    trackTitle: $("#track-title"),
+    coverField: $("#cover-field"),
+    audioFile: $("#audio-file"),
+    dropzone: $("#dropzone"),
+    dropzoneTitle: $("#dropzone-title"),
+    dropzoneDetail: $("#dropzone-detail"),
+    selectedFile: $("#selected-file"),
+    selectedFileName: $("#selected-file-name"),
+    removeAudio: $("#remove-audio"),
+    audioError: $("#audio-error"),
+    styleInput: $("#style-input"),
+    styleError: $("#style-error"),
+    lyricsInput: $("#lyrics-input"),
+    instrumentalToggle: $("#instrumental-toggle"),
+    advancedPanel: $("#advanced-panel"),
+    advancedReset: $("#advanced-reset"),
+    durationInput: $("#duration-input"),
+    seedInput: $("#seed-input"),
+    randomSeed: $("#random-seed"),
+    planOptions: $("#plan-options"),
+    planToggle: $("#plan-toggle"),
+    planFields: $("#plan-fields"),
+    formError: $("#form-error"),
+    submitButton: $("#submit-button"),
+    submitLabel: $(".submit-label"),
+    jobsList: $("#jobs-list"),
+    jobsError: $("#jobs-error"),
+    jobsCount: $("#jobs-count"),
+    workspaceSearch: $("#workspace-search"),
+    workspaceFilter: $("#workspace-filter"),
+    refreshJobs: $("#refresh-jobs"),
+    jobsPaginationWrap: $("#jobs-pagination-wrap"),
+    jobsLoadMore: $("#jobs-load-more"),
+    jobsLoadMoreText: $(".load-more-text", $("#jobs-pagination-wrap")),
+    jobsEndMarker: $("#jobs-end-marker"),
+    lyricsCount: $("#lyrics-count"),
+    player: $("#studio-player"),
+    playerTitle: $("#player-title"),
+    playerSubtitle: $("#player-subtitle"),
+    playerArt: $("#player-art"),
+    playerToggle: $("#player-toggle"),
+    playerPrev: $("#player-prev"),
+    playerNext: $("#player-next"),
+    playerProgress: $("#player-progress"),
+    playerElapsed: $("#player-elapsed"),
+    playerDuration: $("#player-duration"),
+    playerVolume: $("#player-volume"),
+    playerVisualizer: $("#player-visualizer"),
+    ambientBackdrop: $("#ambient-backdrop"),
+    ambientOrb1: $(".ambient-orb-1"),
+    ambientOrb2: $(".ambient-orb-2"),
+    ambientOrb3: $(".ambient-orb-3"),
+    ambientGrain: $("#ambient-grain"),
+    librarySearch: $("#library-search"),
+    clearSearch: $("#clear-search"),
+    libraryFilters: $$('[data-library-mode]'),
+    libraryStatus: $("#library-status"),
+    libraryGrid: $("#library-grid"),
+    growlRegion: $("#growl-region"),
+    toastRegion: $("#toast-region"),
+    toast: $("#toast"),
+    connectionStatuses: $$(".connection-status"),
+    viewLinks: $$('[data-view-link]'),
+    viewPanels: $$('[data-view-panel]'),
+    navQueueLink: $("#nav-queue-link"),
+    navQueueBadge: $("#nav-queue-badge"),
+    mobileNavQueue: $("#mobile-nav-queue"),
+    queuePipWidget: $("#queue-pip-widget"),
+    queuePipPill: $("#queue-pip-pill"),
+    queuePipWindow: $("#queue-pip-window"),
+    queuePipDot: $("#queue-pip-dot"),
+    queuePipPillLabel: $("#queue-pip-pill-label"),
+    queuePipPillCount: $("#queue-pip-pill-count"),
+    queuePipHeadStat: $("#queue-pip-head-stat"),
+    queuePipBtnRefresh: $("#queue-pip-btn-refresh"),
+    queuePipBtnMaximize: $("#queue-pip-btn-maximize"),
+    queuePipBtnMinimize: $("#queue-pip-btn-minimize"),
+    queuePipBtnClose: $("#queue-pip-btn-close"),
+    queuePipRunningBox: $("#queue-pip-running-box"),
+    queuePipPendingBox: $("#queue-pip-pending-box"),
+    queuePipRecentBox: $("#queue-pip-recent-box"),
+    queuePipRunningNum: $("#queue-pip-running-num"),
+    queuePipPendingNum: $("#queue-pip-pending-num"),
+    queuePipDevice: $("#queue-pip-device"),
+    queueView: $("#queue-view"),
+    queuePageRefresh: $("#queue-page-refresh"),
+    queuePageOpenPip: $("#queue-page-open-pip"),
+    queuePageEngineStatus: $("#queue-page-engine-status"),
+    queuePageGpu: $("#queue-page-gpu"),
+    queuePageRunning: $("#queue-page-running"),
+    queuePagePending: $("#queue-page-pending"),
+    queuePageRecent: $("#queue-page-recent"),
+    queuePagePendingCount: $("#queue-page-pending-count")
+  };
+
+  const defaults = {
+    original: {
+      duration: "120",
+      temperature: "1",
+      topP: "0.95",
+      topK: "100",
+      repetitionPenalty: "1.2"
+    },
+    cover: {
+      duration: "360",
+      temperature: "1",
+      topP: "0.95",
+      topK: "100",
+      repetitionPenalty: "1.2"
+    }
+  };
+
+  const state = {
+    view: getViewFromHash(),
+    mode: "original",
+    instrumental: false,
+    seedRandom: true,
+    planEnabled: true,
+    audioFile: null,
+    isSubmitting: false,
+    healthReady: false,
+    jobs: [],
+    jobsLoading: false,
+    jobsError: "",
+    jobsTimer: null,
+    jobsPagination: {
+      offset: 0,
+      limit: 20,
+      total: 0,
+      hasMore: false,
+      loadingMore: false
+    },
+    playerTrack: null,
+    playerQueue: [],
+    library: {
+      items: [],
+      loading: false,
+      loaded: false,
+      error: "",
+      query: "",
+      mode: "all",
+      requestId: 0
+    },
+    libraryDebounce: null,
+    focusTrackId: null,
+    toastTimer: null,
+    notifiedCutoffTracks: new Set(),
+    knownJobStatuses: new Map(),
+    queue: {
+      running: [],
+      pending: [],
+      recent: [],
+      summary: { running_count: 0, pending_count: 0, total_active: 0 },
+      engine: { status: "offline", device: "", vram: "" }
+    }
+  };
+
+  const terminalStatuses = new Set(["completed", "failed", "cancelled"]);
+
+  function getViewFromHash() {
+    const hash = window.location.hash.replace(/^#/, "").split("?")[0];
+    if (hash === "library") return "library";
+    if (hash === "queue") return "queue";
+    return "create";
+  }
+
+  function safeText(value, fallback = "") {
+    if (value === undefined || value === null) return fallback;
+    if (typeof value === "string" || typeof value === "number") return String(value);
+    return fallback;
+  }
+
+  function firstValue(object, keys, fallback = "") {
+    if (!object || typeof object !== "object") return fallback;
+    for (const key of keys) {
+      if (object[key] !== undefined && object[key] !== null && object[key] !== "") {
+        return object[key];
+      }
+    }
+    return fallback;
+  }
+
+  function extractList(payload, keys) {
+    if (Array.isArray(payload)) return payload;
+    if (!payload || typeof payload !== "object") return [];
+    for (const key of keys) {
+      if (Array.isArray(payload[key])) return payload[key];
+    }
+    if (payload.data && typeof payload.data === "object") {
+      for (const key of keys) {
+        if (Array.isArray(payload.data[key])) return payload.data[key];
+      }
+    }
+    return [];
+  }
+
+  function element(tag, options = {}, children = []) {
+    const node = document.createElement(tag);
+    if (options.className) node.className = options.className;
+    if (options.text !== undefined) node.textContent = options.text;
+    if (options.attrs) {
+      Object.entries(options.attrs).forEach(([name, value]) => {
+        if (value === undefined || value === null || value === false) return;
+        if (value === true) node.setAttribute(name, "");
+        else node.setAttribute(name, String(value));
+      });
+    }
+    if (options.properties) {
+      Object.entries(options.properties).forEach(([name, value]) => {
+        node[name] = value;
+      });
+    }
+    if (options.on) {
+      Object.entries(options.on).forEach(([eventName, handler]) => node.addEventListener(eventName, handler));
+    }
+    children.forEach((child) => {
+      if (child) node.append(child);
+    });
+    return node;
+  }
+
+  function svgIcon(name, className = "icon") {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+    svg.setAttribute("class", className);
+    svg.setAttribute("aria-hidden", "true");
+    use.setAttribute("href", `#icon-${name}`);
+    svg.append(use);
+    return svg;
+  }
+
+  const BASE_PATH = (() => {
+    const path = window.location.pathname;
+    return path.endsWith("/") ? path.slice(0, -1) : path;
+  })();
+
+  function resolvePath(path) {
+    if (!path || typeof path !== "string") return path;
+    if (path.startsWith("http://") || path.startsWith("https://") || path.startsWith("blob:")) return path;
+    const clean = path.startsWith("/") ? path : `/${path}`;
+    return BASE_PATH && !clean.startsWith(BASE_PATH) ? `${BASE_PATH}${clean}` : clean;
+  }
+
+  async function fetchJson(url, options = {}) {
+    const resolvedUrl = resolvePath(url);
+    const response = await fetch(resolvedUrl, {
+      credentials: "same-origin",
+      ...options,
+      headers: { ...(options.headers || {}), ...(options.method && options.method !== "GET" ? { "X-Yue2-CSRF": window.yue2Auth?.csrfToken || "" } : {}) }
+    });
+    const contentType = response.headers.get("content-type") || "";
+    let payload = null;
+    if (response.status !== 204) {
+      if (contentType.includes("application/json")) {
+        payload = await response.json().catch(() => null);
+      } else {
+        const text = await response.text().catch(() => "");
+        if (text) {
+          try {
+            payload = JSON.parse(text);
+          } catch {
+            payload = { message: text };
+          }
+        }
+      }
+    }
+    if (!response.ok) {
+      const error = new Error(safeText(payload && (payload.error || payload.message), "요청을 처리하지 못했어요."));
+      error.status = response.status;
+      error.payload = payload;
+      throw error;
+    }
+    return payload;
+  }
+
+  function normalizeMode(value) {
+    const normalized = safeText(value).toLowerCase();
+    return normalized.includes("cover") || normalized === "c" ? "cover" : "original";
+  }
+
+  function normalizeStatus(value) {
+    const normalized = safeText(value, "queued").toLowerCase().replace(/\s+/g, "_");
+    if (["complete", "completed", "success", "succeeded", "done", "finished"].includes(normalized)) return "completed";
+    if (["failed", "failure", "error", "errored"].includes(normalized)) return "failed";
+    if (["cancelled", "canceled", "stopped"].includes(normalized)) return "cancelled";
+    if (["running", "processing", "generating", "in_progress", "in-progress", "uploading"].includes(normalized)) return "processing";
+    return "queued";
+  }
+
+  function normalizeJob(raw, index) {
+    const object = raw && typeof raw === "object" ? raw : {};
+    const id = safeText(firstValue(object, ["id", "job_id", "generation_id", "task_id"], `job-${index}`), `job-${index}`);
+    const rawSafeError = firstValue(object, ["safe_error", "safeError", "user_message", "userMessage", "error_message", "error"], "");
+    const hasSafeError = typeof rawSafeError === "string" && rawSafeError.trim().length > 0;
+    return {
+      ...normalizeTrack(object, index),
+      id,
+      title: safeText(firstValue(object, ["title", "name"], "제목 없는 곡"), "제목 없는 곡"),
+      mode: normalizeMode(firstValue(object, ["mode", "type", "kind"], "original")),
+      status: normalizeStatus(firstValue(object, ["status", "state", "phase"], "queued")),
+      progress: object.progress && typeof object.progress === "object" ? object.progress : null,
+      createdAt: firstValue(object, ["created_at", "createdAt", "submitted_at", "submittedAt", "timestamp"], ""),
+      trackId: safeText(firstValue(object, ["track_id", "trackId", "library_id", "libraryId", "output_id", "outputId"], id), id),
+      error: hasSafeError ? rawSafeError.trim().slice(0, 220) : "작업을 완료하지 못했어요. 다시 시도해 주세요."
+    };
+  }
+
+  function normalizeTrack(raw, index) {
+    const object = raw && typeof raw === "object" ? raw : {};
+    const id = safeText(firstValue(object, ["id", "track_id", "trackId", "library_id", "libraryId"], `track-${index}`), `track-${index}`);
+    return {
+      id,
+      title: safeText(firstValue(object, ["title", "name"], "제목 없는 곡"), "제목 없는 곡"),
+      mode: normalizeMode(firstValue(object, ["mode", "type", "kind"], "original")),
+      style: safeText(firstValue(object, ["style", "prompt", "description"], "")),
+      audioUrl: safeText(firstValue(object, ["audio_url", "audioUrl", "audio", "url"], "")),
+      downloadUrl: safeText(firstValue(object, ["download_url", "downloadUrl", "download"], "")),
+      createdAt: firstValue(object, ["created_at", "createdAt", "date", "timestamp"], ""),
+      creator: safeText(object.creator, "이전 작업")
+    };
+  }
+
+  function toDate(value) {
+    if (value instanceof Date && !Number.isNaN(value.valueOf())) return value;
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const timestamp = value < 100000000000 ? value * 1000 : value;
+      const date = new Date(timestamp);
+      return Number.isNaN(date.valueOf()) ? null : date;
+    }
+    if (typeof value === "string" && value.trim()) {
+      const date = new Date(value);
+      return Number.isNaN(date.valueOf()) ? null : date;
+    }
+    return null;
+  }
+
+  function formatDate(value) {
+    const date = toDate(value);
+    if (!date) return "날짜 미상";
+    return new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "short", day: "numeric" }).format(date);
+  }
+
+  function formatRelative(value) {
+    const date = toDate(value);
+    if (!date) return "방금 전";
+    const diffSeconds = (date.getTime() - Date.now()) / 1000;
+    const absolute = Math.abs(diffSeconds);
+    const units = [
+      ["year", 31536000],
+      ["month", 2592000],
+      ["week", 604800],
+      ["day", 86400],
+      ["hour", 3600],
+      ["minute", 60]
+    ];
+    const unit = units.find(([, seconds]) => absolute >= seconds);
+    if (!unit) return "방금 전";
+    const amount = Math.round(diffSeconds / unit[1]);
+    try {
+      return new Intl.RelativeTimeFormat("ko", { numeric: "auto" }).format(amount, unit[0]);
+    } catch {
+      return formatDate(value);
+    }
+  }
+
+  function statusLabel(status) {
+    if (status === "completed") return "완료";
+    if (status === "failed") return "실패";
+    if (status === "cancelled") return "취소됨";
+    if (status === "processing") return "만드는 중";
+    return "대기 중";
+  }
+
+  function modeLabel(mode) {
+    return mode === "cover" ? "커버" : "새 곡";
+  }
+
+  function isTerminal(job) {
+    return terminalStatuses.has(job.status);
+  }
+
+  function setHealthStatus(ready, checked = true) {
+    state.healthReady = ready;
+    refs.connectionStatuses.forEach((statusNode) => {
+      statusNode.classList.toggle("is-ready", ready);
+      const label = $(".connection-label", statusNode);
+      if (label) label.textContent = ready ? "준비됨" : checked ? "연결 안 됨" : "연결 확인 중";
+    });
+  }
+
+  async function checkHealth() {
+    try {
+      const payload = await fetchJson("/api/health", { headers: { Accept: "application/json" } });
+      const explicitlyUnhealthy = payload && typeof payload === "object"
+        && (payload.ok === false || payload.healthy === false || payload.engine !== "online");
+      setHealthStatus(!explicitlyUnhealthy);
+    } catch {
+      setHealthStatus(false);
+    }
+  }
+
+  function setMode(mode) {
+    state.mode = mode === "cover" ? "cover" : "original";
+    refs.modeOptions.forEach((button) => {
+      const selected = button.dataset.modeOption === state.mode;
+      button.classList.toggle("is-selected", selected);
+      button.setAttribute("aria-pressed", String(selected));
+    });
+    refs.coverField.hidden = state.mode !== "cover";
+    refs.planOptions.hidden = state.mode !== "original";
+    refs.durationInput.value = defaults[state.mode].duration;
+    clearFieldError(refs.audioFile, refs.audioError);
+    clearFormError();
+  }
+
+  function syncSeedState() {
+    state.seedRandom = refs.randomSeed.checked;
+    refs.seedInput.disabled = state.seedRandom;
+    refs.seedInput.setAttribute("aria-disabled", String(state.seedRandom));
+  }
+
+  function resetAdvancedSettings() {
+    const values = defaults[state.mode];
+    refs.durationInput.value = values.duration;
+    $("#temperature-input").value = values.temperature;
+    $("#top-p-input").value = values.topP;
+    $("#top-k-input").value = values.topK;
+    $("#repetition-input").value = values.repetitionPenalty;
+    refs.randomSeed.checked = true;
+    refs.seedInput.value = "";
+    syncSeedState();
+    refs.planToggle.setAttribute("aria-checked", "true");
+    refs.planToggle.classList.add("is-on");
+    syncPlanState();
+    $("#plan-temperature-input").value = "0.7";
+    $("#plan-top-p-input").value = "0.9";
+    $("#plan-top-k-input").value = "30";
+    $("#plan-repetition-input").value = "1.005";
+    $("#penalty-window-input").value = "100";
+
+    $$("input", refs.advancedPanel).forEach((input) => {
+      input.classList.remove("is-invalid");
+    });
+    clearFormError();
+
+    if (refs.advancedReset) {
+      refs.advancedReset.classList.remove("is-spinning");
+      void refs.advancedReset.offsetWidth;
+      refs.advancedReset.classList.add("is-spinning");
+      window.setTimeout(() => refs.advancedReset.classList.remove("is-spinning"), 500);
+    }
+
+    showToast("고급 설정을 기본값으로 초기화했습니다.");
+  }
+
+  function syncPlanState() {
+    state.planEnabled = refs.planToggle.getAttribute("aria-checked") === "true";
+    refs.planFields.classList.toggle("is-disabled", !state.planEnabled);
+    $$("input", refs.planFields).forEach((input) => {
+      input.disabled = !state.planEnabled;
+    });
+  }
+
+  function setInstrumental(enabled) {
+    state.instrumental = enabled;
+    refs.instrumentalToggle.setAttribute("aria-checked", String(enabled));
+    refs.instrumentalToggle.classList.toggle("is-on", enabled);
+    refs.lyricsInput.disabled = enabled;
+    updateLyricsCount();
+  }
+
+  function updateLyricsCount() {
+    refs.lyricsCount.textContent = `${refs.lyricsInput.value.length.toLocaleString("ko-KR")} / 6,000`;
+  }
+
+  function clearFieldError(input, errorNode) {
+    if (input) input.classList.remove("is-invalid");
+    if (errorNode) {
+      errorNode.hidden = true;
+      errorNode.textContent = "";
+    }
+  }
+
+  function showFieldError(input, errorNode, message) {
+    if (input) input.classList.add("is-invalid");
+    if (errorNode) {
+      errorNode.hidden = false;
+      errorNode.textContent = message;
+    }
+  }
+
+  function clearFormError() {
+    refs.formError.hidden = true;
+    refs.formError.textContent = "";
+  }
+
+  function showFormError(message) {
+    refs.formError.hidden = false;
+    refs.formError.textContent = message;
+  }
+
+  function isAudioFile(file) {
+    if (!file) return false;
+    return /\.(mp3|wav|m4a|ogg|flac|aac|opus)$/i.test(file.name || "");
+  }
+
+  function resetAudioSelection() {
+    state.audioFile = null;
+    refs.audioFile.value = "";
+    refs.selectedFile.hidden = true;
+    refs.selectedFileName.textContent = "";
+    refs.dropzoneTitle.textContent = "오디오를 올려주세요";
+    refs.dropzoneDetail.textContent = "클릭하거나 파일을 이곳에 끌어다 놓으세요.";
+    clearFieldError(refs.audioFile, refs.audioError);
+  }
+
+  function selectAudioFile(file) {
+    if (!file) return;
+    if (!isAudioFile(file)) {
+      resetAudioSelection();
+      showFieldError(refs.audioFile, refs.audioError, "오디오 파일을 선택해 주세요.");
+      refs.dropzone.focus();
+      return;
+    }
+    state.audioFile = file;
+    refs.selectedFile.hidden = false;
+    refs.selectedFileName.textContent = file.name || "선택한 오디오";
+    refs.dropzoneTitle.textContent = "오디오가 준비됐어요";
+    refs.dropzoneDetail.textContent = "다른 파일을 선택하려면 이 영역을 다시 눌러주세요.";
+    clearFieldError(refs.audioFile, refs.audioError);
+  }
+
+  function appendSuggestion(suggestion) {
+    const current = refs.styleInput.value.trim();
+    refs.styleInput.value = current ? `${current}\n${suggestion}` : suggestion;
+    clearFieldError(refs.styleInput, refs.styleError);
+    refs.styleInput.focus();
+    const end = refs.styleInput.value.length;
+    refs.styleInput.setSelectionRange(end, end);
+  }
+
+  function validateForm() {
+    clearFormError();
+    clearFieldError(refs.styleInput, refs.styleError);
+    clearFieldError(refs.audioFile, refs.audioError);
+    const style = refs.styleInput.value.trim();
+    if (!style) {
+      showFieldError(refs.styleInput, refs.styleError, "사운드 스타일을 적어주세요.");
+      refs.styleInput.focus();
+      return false;
+    }
+    if (state.mode === "cover" && !state.audioFile) {
+      showFieldError(refs.audioFile, refs.audioError, "커버에 사용할 오디오를 선택해 주세요.");
+      refs.dropzone.focus();
+      return false;
+    }
+    const enabledNumbers = $$('input[type="number"]', refs.composerForm).filter((input) => !input.disabled);
+    const invalidNumber = enabledNumbers.find((input) => !input.checkValidity());
+    if (invalidNumber) {
+      showFormError("고급 옵션의 입력 범위를 확인해 주세요.");
+      refs.advancedPanel.open = true;
+      invalidNumber.focus();
+      return false;
+    }
+    return true;
+  }
+
+  function buildGenerationFormData() {
+    const formData = new FormData();
+    formData.append("mode", state.mode);
+    formData.append("title", refs.trackTitle.value.trim());
+    formData.append("style", refs.styleInput.value.trim());
+    formData.append("lyrics", state.instrumental ? "" : refs.lyricsInput.value.trim());
+    formData.append("instrumental", String(state.instrumental));
+    formData.append("duration", refs.durationInput.value || defaults[state.mode].duration);
+    formData.append("random_seed", String(state.seedRandom));
+    if (!state.seedRandom && refs.seedInput.value.trim()) formData.append("seed", refs.seedInput.value.trim());
+    formData.append("temperature", $("#temperature-input").value || defaults[state.mode].temperature);
+    formData.append("top_p", $("#top-p-input").value || defaults[state.mode].topP);
+    formData.append("top_k", $("#top-k-input").value || defaults[state.mode].topK);
+    formData.append("repetition_penalty", $("#repetition-input").value || defaults[state.mode].repetitionPenalty);
+    formData.append("use_plan", String(state.mode === "original" && state.planEnabled));
+    if (state.mode === "original" && state.planEnabled) {
+      formData.append("plan_temperature", $("#plan-temperature-input").value || "0.7");
+      formData.append("plan_top_p", $("#plan-top-p-input").value || "0.9");
+      formData.append("plan_top_k", $("#plan-top-k-input").value || "30");
+      formData.append("plan_repetition_penalty", $("#plan-repetition-input").value || "1.005");
+      formData.append("penalty_window", $("#penalty-window-input").value || "100");
+    }
+    if (state.mode === "cover" && state.audioFile) {
+      formData.append("audio_file", state.audioFile, state.audioFile.name);
+    }
+    return formData;
+  }
+
+  function setSubmitting(isSubmitting) {
+    state.isSubmitting = isSubmitting;
+    refs.submitButton.disabled = isSubmitting;
+    refs.submitButton.classList.toggle("is-loading", isSubmitting);
+    refs.submitButton.setAttribute("aria-busy", String(isSubmitting));
+    refs.submitLabel.textContent = isSubmitting ? "생성 중…" : "음악 생성하기";
+  }
+
+  async function submitGeneration(event) {
+    event.preventDefault();
+    if (state.isSubmitting || !validateForm()) return;
+    setSubmitting(true);
+    try {
+      await fetchJson("/api/generations", {
+        method: "POST",
+        body: buildGenerationFormData()
+      });
+      refs.trackTitle.value = "";
+      clearFormError();
+      Growl.info({
+        title: "음악 생성 시작",
+        message: "요청이 성공적으로 전송되었습니다. 작업 공간에서 진행률을 실시간으로 확인해보세요.",
+        duration: 5000
+      });
+      await loadJobs({ reset: true });
+    } catch (error) {
+      if (error && error.status === 503) {
+        showFormError("지금은 음악을 만들 수 없어요. 잠시 후 다시 시도해 주세요.");
+        showToast("잠시 후 다시 시도해 주세요.", "error");
+      } else {
+        showFormError("요청을 보내지 못했어요. 잠시 후 다시 시도해 주세요.");
+        showToast("요청을 보내지 못했어요.", "error");
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function scheduleJobsPolling() {
+    if (state.jobsTimer) {
+      window.clearTimeout(state.jobsTimer);
+      state.jobsTimer = null;
+    }
+    if (!state.jobs.some((job) => !isTerminal(job))) return;
+    state.jobsTimer = window.setTimeout(() => {
+      state.jobsTimer = null;
+      loadJobs({ reset: false });
+    }, 2000);
+  }
+
+  async function loadJobs({ initial = false, reset = true } = {}) {
+    if (state.jobsLoading) return;
+    state.jobsLoading = true;
+    refs.refreshJobs.disabled = true;
+    if (initial && state.jobs.length === 0) renderJobs();
+
+    const limit = reset ? 20 : Math.max(state.jobs.length, 20);
+    const offset = 0;
+
+    try {
+      const payload = await fetchJson(`/api/jobs?limit=${limit}&offset=${offset}&paged=1`, {
+        headers: { Accept: "application/json" }
+      });
+      const list = extractList(payload, ["jobs", "items", "generations", "data"]);
+      const previousCompleted = new Set(state.jobs.filter((job) => job.status === "completed").map((job) => job.id));
+      const freshJobs = list.map(normalizeJob);
+      state.jobs = freshJobs;
+
+      const total = typeof payload?.total === "number" ? payload.total : freshJobs.length;
+      state.jobsPagination.total = total;
+      state.jobsPagination.offset = offset;
+      state.jobsPagination.limit = 20;
+      state.jobsPagination.hasMore = Boolean(payload?.has_more !== undefined ? payload.has_more : freshJobs.length < total);
+
+      if (!initial) {
+        state.jobs.forEach((job) => {
+          const prevStatus = state.knownJobStatuses.get(job.id);
+          if (prevStatus && prevStatus !== job.status) {
+            if (job.status === "completed") {
+              Growl.success({
+                title: "음악 생성 완료",
+                message: `"${job.title}" 생성이 완료되었습니다!`,
+                duration: 6500,
+                action: {
+                  label: "지금 재생",
+                  onClick: () => playTrack(job, state.jobs.filter((item) => item.status === "completed"))
+                }
+              });
+            } else if (job.status === "failed") {
+              Growl.error({
+                title: "음악 생성 실패",
+                message: job.error || "곡 생성을 완료하지 못했습니다.",
+                duration: 7000
+              });
+            }
+          }
+        });
+      }
+      state.jobs.forEach((job) => state.knownJobStatuses.set(job.id, job.status));
+      if (state.jobs.some((job) => job.status === "completed" && !previousCompleted.has(job.id))) {
+        state.library.loaded = false;
+        if (state.view === "library") loadLibrary();
+      }
+      state.jobsError = "";
+    } catch {
+      state.jobsError = "작업 상태를 불러오지 못했어요.";
+    } finally {
+      state.jobsLoading = false;
+      refs.refreshJobs.disabled = false;
+      renderJobs({ preserveScroll: !reset });
+      scheduleJobsPolling();
+      if (typeof QueueManager !== "undefined") QueueManager.poll();
+    }
+  }
+
+  async function loadMoreJobs() {
+    if (state.jobsPagination.loadingMore || !state.jobsPagination.hasMore || state.jobsLoading) return;
+    state.jobsPagination.loadingMore = true;
+    updateJobsPagination();
+
+    const nextOffset = state.jobs.length;
+    const limit = 20;
+
+    try {
+      const payload = await fetchJson(`/api/jobs?limit=${limit}&offset=${nextOffset}&paged=1`, {
+        headers: { Accept: "application/json" }
+      });
+      const list = extractList(payload, ["jobs", "items", "generations", "data"]);
+      const nextBatch = list.map(normalizeJob);
+      const existingIds = new Set(state.jobs.map((j) => j.id));
+      const freshItems = nextBatch.filter((j) => !existingIds.has(j.id));
+      state.jobs = state.jobs.concat(freshItems);
+
+      const total = typeof payload?.total === "number" ? payload.total : state.jobs.length;
+      state.jobsPagination.total = total;
+      state.jobsPagination.offset = nextOffset;
+      state.jobsPagination.hasMore = Boolean(payload?.has_more !== undefined ? payload.has_more : state.jobs.length < total) && freshItems.length > 0;
+      freshItems.forEach((job) => state.knownJobStatuses.set(job.id, job.status));
+    } catch {
+      showToast("이전 작업을 추가로 불러오지 못했습니다.", "error");
+    } finally {
+      state.jobsPagination.loadingMore = false;
+      renderJobs({ preserveScroll: true });
+    }
+  }
+
+  function updateJobsPagination() {
+    if (!refs.jobsPaginationWrap) return;
+    const { total, hasMore, loadingMore } = state.jobsPagination;
+    const query = refs.workspaceSearch ? refs.workspaceSearch.value.trim() : "";
+    const filter = refs.workspaceFilter ? refs.workspaceFilter.value : "all";
+    const isFiltered = Boolean(query) || filter !== "all";
+
+    if (state.jobs.length === 0) {
+      refs.jobsPaginationWrap.hidden = true;
+      return;
+    }
+
+    refs.jobsPaginationWrap.hidden = false;
+    if (refs.jobsLoadMore) {
+      refs.jobsLoadMore.hidden = !hasMore || isFiltered;
+      refs.jobsLoadMore.disabled = loadingMore;
+      refs.jobsLoadMore.classList.toggle("is-loading", loadingMore);
+      const remaining = Math.max(0, total - state.jobs.length);
+      if (refs.jobsLoadMoreText) {
+        refs.jobsLoadMoreText.textContent = loadingMore
+          ? "불러오는 중…"
+          : remaining > 0
+          ? `이전 작업 20곡 더보기 (${remaining}곡 남음)`
+          : "이전 작업 더보기";
+      }
+    }
+    if (refs.jobsEndMarker) {
+      refs.jobsEndMarker.hidden = hasMore || isFiltered || state.jobs.length === 0;
+      const endText = $(".jobs-end-text", refs.jobsEndMarker);
+      if (endText) {
+        endText.textContent = `모든 작업 기록을 불러왔습니다 (총 ${total}곡)`;
+      }
+    }
+  }
+
+  let jobsObserver = null;
+  function setupJobsInfiniteScroll() {
+    if (!("IntersectionObserver" in window) || !refs.jobsPaginationWrap) return;
+    if (jobsObserver) jobsObserver.disconnect();
+    jobsObserver = new IntersectionObserver((entries) => {
+      const entry = entries[0];
+      if (entry && entry.isIntersecting && state.jobsPagination.hasMore && !state.jobsPagination.loadingMore && !state.jobsLoading) {
+        loadMoreJobs();
+      }
+    }, {
+      root: refs.jobsList,
+      rootMargin: "150px 0px"
+    });
+    jobsObserver.observe(refs.jobsPaginationWrap);
+  }
+
+  function renderJobs({ preserveScroll = false } = {}) {
+    const query = refs.workspaceSearch.value.trim().toLocaleLowerCase();
+    const filter = refs.workspaceFilter.value;
+    const jobs = state.jobs.filter((job) => {
+      const matchesText = `${job.title} ${job.style}`.toLocaleLowerCase().includes(query);
+      const matchesStatus = filter === "all" || (filter === "active" ? !isTerminal(job) : job.status === filter);
+      return matchesText && matchesStatus;
+    });
+    const total = state.jobsPagination.total || state.jobs.length;
+    if (total > jobs.length && !query && filter === "all") {
+      refs.jobsCount.textContent = `${jobs.length} / 전체 ${total}곡`;
+    } else {
+      refs.jobsCount.textContent = `${jobs.length}곡`;
+    }
+    if (state.jobsLoading && state.jobs.length === 0) {
+      refs.jobsList.innerHTML = "";
+      refs.jobsList.append(
+        element("div", { className: "jobs-loading", attrs: { "aria-hidden": "true" } }, [
+          element("span", { className: "skeleton-line skeleton-line-wide" }),
+          element("span", { className: "skeleton-line" }),
+          element("span", { className: "skeleton-line skeleton-line-short" })
+        ])
+      );
+      if (refs.jobsPaginationWrap) refs.jobsPaginationWrap.hidden = true;
+    } else if (jobs.length === 0) {
+      refs.jobsList.innerHTML = "";
+      refs.jobsList.append(
+        element("div", { className: "jobs-empty" }, [
+          element("div", { className: "empty-wave", attrs: { "aria-hidden": "true" } }, Array.from({ length: 7 }, () => element("i"))),
+          element("strong", { text: query || filter !== "all" ? "조건에 맞는 작업이 없어요" : "당신의 다음 음악, 여기서 시작해요" }),
+          element("span", { text: query || filter !== "all" ? "검색어나 상태 필터를 바꿔 보세요." : "가사와 스타일을 더하고, 첫 번째 곡을 만들어 보세요." }),
+          element("div", { className: "empty-hint", text: "완성된 음악은 라이브러리에 자동으로 저장됩니다" })
+        ])
+      );
+      if (refs.jobsPaginationWrap) refs.jobsPaginationWrap.hidden = true;
+    } else {
+      const prevScrollTop = preserveScroll ? refs.jobsList.scrollTop : null;
+      refs.jobsList.innerHTML = "";
+      jobs.forEach((job) => refs.jobsList.append(createJobCard(job)));
+      if (refs.jobsPaginationWrap) {
+        refs.jobsList.append(refs.jobsPaginationWrap);
+      }
+      if (prevScrollTop !== null) {
+        refs.jobsList.scrollTop = prevScrollTop;
+      }
+    }
+    refs.jobsError.hidden = !state.jobsError;
+    refs.jobsError.textContent = state.jobsError;
+    updateJobsPagination();
+    syncPlayerButtons();
+  }
+
+  function createJobCard(job) {
+    const statusClass = job.status === "completed" ? "is-complete" : job.status === "failed" ? "is-failed" : job.status === "cancelled" ? "is-cancelled" : "is-working";
+    const title = element("h3", { className: "job-title", text: job.title });
+    const badge = element("span", { className: `status-badge ${statusClass}`, text: statusLabel(job.status) });
+    const playable = job.status === "completed" && safeMediaUrl(job.audioUrl);
+    const artwork = element(playable ? "button" : "div", {
+      className: "job-art",
+      attrs: playable ? { type: "button", "aria-label": `${job.title} 재생`, "data-play-id": job.id } : { "aria-hidden": "true" },
+      on: playable ? { click: () => playTrack(job, state.jobs.filter((item) => item.status === "completed")) } : {}
+    }, [svgIcon(playable ? "play" : "wave")]);
+    applyArtwork(artwork, job.id);
+    const copy = element("div", { className: "job-copy" }, [
+      title,
+      element("p", { className: "job-style", text: job.style }),
+      element("div", { className: "job-card-meta" }, [
+        element("span", { text: modeLabel(job.mode) }),
+        element("span", { text: "·" }),
+        element("span", { text: formatRelative(job.createdAt) }),
+        element("span", { text: job.creator })
+      ])
+    ]);
+    if (job.status === "processing" && job.progress) {
+      const progress = job.progress;
+      const labels = { preparing: "모델 준비 중", abc: "악보 생성", music: "음악 토큰 생성", rendering: "오디오 렌더링", finishing: "마무리 중" };
+      const current = Number(progress.current);
+      const total = Number(progress.total);
+      const measured = Number.isFinite(current) && Number.isFinite(total) && total > 0;
+      const details = [labels[progress.phase] || "음악 생성 중"];
+      if (measured) details.push(`${current.toLocaleString()} / ${total.toLocaleString()} ${progress.phase === "rendering" ? "단계" : "토큰"}`);
+      if (measured && progress.phase === "music") details.push(`약 ${(current / 25).toFixed(1)}초 분량`);
+      if (["abc", "music"].includes(progress.phase) && Number.isFinite(Number(progress.rate)) && Number(progress.rate) > 0) {
+        details.push(`${Number(progress.rate).toFixed(1)} 토큰/s`);
+      }
+      copy.append(element("div", { className: "job-progress" }, [
+        element("span", { text: details.join(" · ") }),
+        ...(measured ? [element("progress", { attrs: { value: Math.min(current, total), max: total, "aria-label": labels[progress.phase] || "생성 진행률" } })] : [])
+      ]));
+    }
+    const foot = element("div", { className: "job-card-foot" }, [badge]);
+    const card = element("article", { className: "job-card", attrs: { "data-track-id": job.id } }, [artwork, copy, foot]);
+
+    if (job.status === "failed") {
+      copy.append(element("p", { className: "job-error", text: job.error }));
+    } else if (job.status === "completed") {
+      const action = element("button", {
+        className: "library-action",
+        attrs: { type: "button" },
+        on: { click: () => openLibrary(job.trackId || "") }
+      }, [svgIcon("library"), element("span", { text: "라이브러리" })]);
+      foot.append(action);
+    }
+    return card;
+  }
+
+  function hashString(value) {
+    let hash = 2166136261;
+    const text = String(value);
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  }
+
+  function artworkColors(id) {
+    const palettes = [
+      ["#e1a17b", "#6b3e58", "#241c37"],
+      ["#9ab9db", "#34597c", "#121e36"],
+      ["#d9b775", "#786a38", "#293b36"],
+      ["#baa6df", "#655393", "#28233d"],
+      ["#db868c", "#96394c", "#391d32"],
+      ["#77bbbd", "#386975", "#182e40"]
+    ];
+    return palettes[hashString(id) % palettes.length];
+  }
+
+  function applyArtwork(node, id) {
+    artworkColors(id).forEach((color, index) => node.style.setProperty(`--art-${"abc"[index]}`, color));
+  }
+
+  function formatTime(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+    return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+  }
+
+  function syncPlayerButtons() {
+    const playing = Boolean(state.playerTrack) && !refs.player.paused && !refs.player.ended;
+    document.body.classList.toggle("is-playing", playing);
+    if (playing) {
+      AudioVisualizer.start();
+    } else {
+      AudioVisualizer.pause();
+    }
+    refs.playerToggle.disabled = !state.playerTrack;
+    refs.playerToggle.setAttribute("aria-label", playing ? "일시정지" : "재생");
+    $("use", refs.playerToggle).setAttribute("href", playing ? "#icon-pause" : "#icon-play");
+    const index = state.playerQueue.findIndex((track) => track.id === state.playerTrack?.id);
+    refs.playerPrev.disabled = index <= 0;
+    refs.playerNext.disabled = index < 0 || index >= state.playerQueue.length - 1;
+    $$('[data-play-id]').forEach((button) => {
+      const active = playing && button.dataset.playId === state.playerTrack?.id;
+      const title = button.dataset.trackTitle || button.closest(".job-card")?.querySelector(".job-title")?.textContent || "음악";
+      button.setAttribute("aria-label", `${title} ${active ? "일시정지" : "재생"}`);
+      const iconUse = $("use", button);
+      if (iconUse) iconUse.setAttribute("href", active ? "#icon-pause" : "#icon-play");
+    });
+    $$(".job-card, .track-card").forEach((card) => {
+      const isCardActive = playing && (card.dataset.trackId === state.playerTrack?.id || Boolean(card.querySelector(`[data-play-id="${state.playerTrack?.id}"]`)));
+      card.classList.toggle("is-playing-card", isCardActive);
+    });
+  }
+
+  function syncPlayerTime() {
+    const duration = refs.player.duration;
+    const current = refs.player.currentTime;
+    refs.playerElapsed.textContent = formatTime(current);
+    refs.playerDuration.textContent = formatTime(duration);
+    refs.playerProgress.disabled = !Number.isFinite(duration) || duration <= 0;
+    refs.playerProgress.value = refs.playerProgress.disabled ? "0" : String(Math.round(current / duration * 1000));
+    refs.playerProgress.setAttribute("aria-valuetext", `${formatTime(current)} / ${formatTime(duration)}`);
+    if (Number.isFinite(duration) && duration > 0) {
+      checkCutoffEnding(state.playerTrack, duration);
+    }
+  }
+
+  async function resumePlayer() {
+    AudioVisualizer.ensureAudioContext();
+    try {
+      await refs.player.play();
+    } catch (error) {
+      if (error.name !== "AbortError") showToast("음악을 재생하지 못했어요. 다시 시도해 주세요.", "error");
+    }
+    syncPlayerButtons();
+  }
+
+  function playTrack(track, queue) {
+    const url = safeMediaUrl(track.audioUrl);
+    if (!url) return;
+    state.playerQueue = queue.filter((item) => safeMediaUrl(item.audioUrl));
+    if (state.playerTrack?.id === track.id) {
+      if (refs.player.paused) resumePlayer();
+      else refs.player.pause();
+      syncPlayerButtons();
+      return;
+    }
+    state.playerTrack = track;
+    const colors = artworkColors(track.id);
+    document.body.style.setProperty("--art-a", colors[0]);
+    document.body.style.setProperty("--art-b", colors[1]);
+    document.body.style.setProperty("--art-c", colors[2]);
+    if (refs.ambientBackdrop) {
+      refs.ambientBackdrop.style.setProperty("--art-a", colors[0]);
+      refs.ambientBackdrop.style.setProperty("--art-b", colors[1]);
+      refs.ambientBackdrop.style.setProperty("--art-c", colors[2]);
+    }
+    refs.player.src = url;
+    refs.playerTitle.textContent = track.title;
+    refs.playerSubtitle.textContent = track.style || modeLabel(track.mode);
+    refs.playerArt.classList.add("has-track");
+    applyArtwork(refs.playerArt, track.id);
+    syncPlayerTime();
+    syncPlayerButtons();
+    resumePlayer();
+    AudioVisualizer.start();
+  }
+
+  function stepPlayer(direction) {
+    const index = state.playerQueue.findIndex((track) => track.id === state.playerTrack?.id);
+    const track = state.playerQueue[index + direction];
+    if (index >= 0 && track) playTrack(track, state.playerQueue);
+  }
+
+  function safeMediaUrl(value) {
+    const raw = safeText(value).trim();
+    if (!raw) return "";
+    try {
+      const resolved = resolvePath(raw);
+      const url = new URL(resolved, window.location.origin);
+      if (["http:", "https:", "blob:"].includes(url.protocol)) return url.href;
+      return "";
+    } catch {
+      return "";
+    }
+  }
+
+  function renderLibrarySkeletons() {
+    refs.libraryGrid.innerHTML = "";
+    for (let index = 0; index < 3; index += 1) {
+      refs.libraryGrid.append(element("div", { className: "track-skeleton", attrs: { "aria-hidden": "true" } }));
+    }
+  }
+
+  function renderEmptyLibrary(isFiltered) {
+    refs.libraryGrid.innerHTML = "";
+    refs.libraryGrid.append(
+      element("div", { className: "empty-state" }, [
+        element("div", { className: "empty-state-inner" }, [
+          element("span", { className: "empty-state-mark", attrs: { "aria-hidden": "true" } }, [svgIcon(isFiltered ? "search" : "title")]),
+          element("h2", { text: isFiltered ? "찾는 음악이 없어요." : "아직 만든 음악이 없어요." }),
+          element("p", { text: isFiltered ? "다른 검색어 또는 필터로 다시 찾아보세요." : "첫 곡을 만들면 이곳에 차곡차곡 모여요." }),
+          isFiltered ? null : element("a", { className: "new-track-link", text: "첫 곡 만들기", attrs: { href: "#create" } })
+        ])
+      ])
+    );
+  }
+
+  function renderLibrary() {
+    if (state.library.loading) {
+      refs.libraryStatus.textContent = "음악을 불러오는 중…";
+      renderLibrarySkeletons();
+      return;
+    }
+    if (state.library.error) {
+      refs.libraryStatus.textContent = state.library.error;
+      renderEmptyLibrary(true);
+      return;
+    }
+    const isFiltered = Boolean(state.library.query.trim()) || state.library.mode !== "all";
+    if (state.library.items.length === 0) {
+      refs.libraryStatus.textContent = "";
+      renderEmptyLibrary(isFiltered);
+      return;
+    }
+    refs.libraryStatus.textContent = `${state.library.items.length}개의 음악`;
+    refs.libraryGrid.innerHTML = "";
+    state.library.items.forEach((track) => refs.libraryGrid.append(createTrackCard(track)));
+    syncPlayerButtons();
+    focusLibraryTrack();
+  }
+
+  function createTrackCard(track) {
+    const colors = artworkColors(track.id);
+    const artwork = element("div", { className: "artwork" });
+    artwork.style.setProperty("--art-a", colors[0]);
+    artwork.style.setProperty("--art-b", colors[1]);
+    artwork.style.setProperty("--art-c", colors[2]);
+    artwork.append(
+      element("div", { className: "artwork-top" }, [
+        element("span", { className: "mode-badge", text: modeLabel(track.mode) })
+      ])
+    );
+
+    const card = element("article", {
+      className: "track-card",
+      attrs: { tabindex: "-1", "data-track-id": track.id }
+    }, [
+      artwork,
+      element("div", { className: "track-info" }, [
+        element("div", { className: "track-info-head" }, [
+          element("h2", { className: "track-title", text: track.title }),
+          element("time", { className: "track-date", text: formatDate(track.createdAt), attrs: { datetime: toDate(track.createdAt)?.toISOString() || "" } })
+        ]),
+        element("p", { className: "track-style", text: track.style || "스타일 설명 없음" }),
+        element("p", { className: "track-creator", text: `만든 사람: ${track.creator}` })
+      ])
+    ]);
+
+    const info = $(".track-info", card);
+    const audioUrl = safeMediaUrl(track.audioUrl);
+    if (audioUrl) {
+      artwork.append(element("button", {
+        className: "artwork-play",
+        attrs: { type: "button", "aria-label": `${track.title} 재생`, "data-play-id": track.id, "data-track-title": track.title },
+        on: { click: () => playTrack(track, state.library.items) }
+      }, [svgIcon("play")]));
+    } else {
+      info.append(element("p", { className: "track-no-audio", text: "미리듣기를 준비 중이에요." }));
+    }
+
+    const downloadUrl = safeMediaUrl(track.downloadUrl);
+    if (downloadUrl) {
+      const slug = track.title.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "yue-track";
+      info.append(element("div", { className: "track-actions" }, [
+        element("a", {
+          className: "download-link",
+          attrs: { href: downloadUrl, download: `${slug}.mp3` }
+        }, [svgIcon("download"), element("span", { text: "다운로드" })])
+      ]));
+    }
+    return card;
+  }
+
+  async function loadLibrary() {
+    const requestId = ++state.library.requestId;
+    state.library.loading = true;
+    state.library.error = "";
+    renderLibrary();
+    const params = new URLSearchParams();
+    const search = state.library.query.trim();
+    if (search) params.set("q", search);
+    if (state.library.mode !== "all") params.set("mode", state.library.mode);
+    const query = params.toString();
+    try {
+      const payload = await fetchJson(`/api/library${query ? `?${query}` : ""}`, { headers: { Accept: "application/json" } });
+      if (requestId !== state.library.requestId) return;
+      const list = extractList(payload, ["tracks", "items", "library", "data"]);
+      state.library.items = list.map(normalizeTrack);
+      state.library.loaded = true;
+    } catch {
+      if (requestId !== state.library.requestId) return;
+      state.library.error = "라이브러리를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.";
+    } finally {
+      if (requestId !== state.library.requestId) return;
+      state.library.loading = false;
+      renderLibrary();
+    }
+  }
+
+  function focusLibraryTrack() {
+    if (!state.focusTrackId || state.library.loading) return;
+    const wanted = String(state.focusTrackId);
+    const card = $$(".track-card", refs.libraryGrid).find((candidate) => candidate.dataset.trackId === wanted);
+    if (!card) return;
+    state.focusTrackId = null;
+    card.classList.add("is-focused");
+    card.focus({ preventScroll: true });
+    const reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    card.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "center" });
+    window.setTimeout(() => card.classList.remove("is-focused"), 2600);
+  }
+
+  function openLibrary(trackId = "") {
+    state.focusTrackId = trackId ? String(trackId) : null;
+    if (trackId) {
+      state.library.query = "";
+      state.library.mode = "all";
+      state.library.loaded = false;
+      refs.librarySearch.value = "";
+      refs.clearSearch.hidden = true;
+      refs.libraryFilters.forEach((button) => {
+        const selected = button.dataset.libraryMode === "all";
+        button.classList.toggle("is-selected", selected);
+        button.setAttribute("aria-pressed", String(selected));
+      });
+    }
+    if (getViewFromHash() !== "library") {
+      window.location.hash = "library";
+    } else {
+      renderRoute();
+      focusLibraryTrack();
+    }
+  }
+
+  function renderRoute() {
+    const view = getViewFromHash();
+    if (view !== state.view) window.scrollTo({ top: 0, behavior: "instant" });
+    state.view = view;
+    refs.viewPanels.forEach((panel) => {
+      const visible = panel.dataset.viewPanel === view;
+      panel.hidden = !visible;
+      panel.classList.toggle("is-visible", visible);
+    });
+    refs.viewLinks.forEach((link) => {
+      link.classList.toggle("is-active", link.dataset.viewLink === view);
+      if (link.dataset.viewLink === view) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    });
+    if (view === "library" && !state.library.loaded && !state.library.loading) loadLibrary();
+    if (view === "queue" && typeof QueueManager !== "undefined") QueueManager.poll(true);
+  }
+
+  const Growl = {
+    show({ type = "info", title = "", message = "", duration = 5000, action = null, onDismiss = null } = {}) {
+      if (!refs.growlRegion) return null;
+
+      const card = element("div", { className: `growl-card is-${type}` });
+
+      let iconName = "info";
+      if (type === "success") iconName = "check";
+      else if (type === "warning") iconName = "alert";
+      else if (type === "error") iconName = "close";
+      const icon = svgIcon(iconName, "growl-icon");
+
+      const content = element("div", { className: "growl-content" });
+      if (title) {
+        content.append(element("div", { className: "growl-title", text: title }));
+      }
+      if (message) {
+        content.append(element("div", { className: "growl-message", text: message }));
+      }
+
+      const closeBtn = element("button", {
+        className: "growl-close",
+        attrs: { type: "button", "aria-label": "알림 닫기" },
+        on: {
+          click: (e) => {
+            e.stopPropagation();
+            dismiss();
+          }
+        }
+      }, [svgIcon("close")]);
+
+      if (action && action.label && typeof action.onClick === "function") {
+        const actionBtn = element("button", {
+          className: "growl-action",
+          attrs: { type: "button" },
+          text: action.label,
+          on: {
+            click: (e) => {
+              e.stopPropagation();
+              try {
+                action.onClick();
+              } finally {
+                dismiss();
+              }
+            }
+          }
+        });
+        content.append(element("div", { className: "growl-actions" }, [actionBtn]));
+      }
+
+      card.append(icon, content, closeBtn);
+
+      let progressBar = null;
+      if (duration > 0) {
+        progressBar = element("div", { className: "growl-progress-bar" });
+        card.append(progressBar);
+      }
+
+      let timer = null;
+      let remaining = duration;
+      let startTime = Date.now();
+
+      function startTimer(timeMs) {
+        if (timeMs <= 0) return;
+        startTime = Date.now();
+        remaining = timeMs;
+        if (progressBar) {
+          progressBar.style.transition = `transform ${remaining}ms linear`;
+          progressBar.style.transform = "scaleX(0)";
+        }
+        timer = window.setTimeout(dismiss, remaining);
+      }
+
+      function pauseTimer() {
+        if (timer) {
+          window.clearTimeout(timer);
+          timer = null;
+          const elapsed = Date.now() - startTime;
+          remaining = Math.max(0, remaining - elapsed);
+          if (progressBar) {
+            const currentScale = duration > 0 ? remaining / duration : 0;
+            progressBar.style.transition = "none";
+            progressBar.style.transform = `scaleX(${currentScale})`;
+          }
+        }
+      }
+
+      function resumeTimer() {
+        if (remaining > 0 && !timer) {
+          startTimer(remaining);
+        }
+      }
+
+      function dismiss() {
+        if (timer) {
+          window.clearTimeout(timer);
+          timer = null;
+        }
+        if (card.classList.contains("is-leaving")) return;
+        card.classList.add("is-leaving");
+        window.setTimeout(() => {
+          card.remove();
+          if (typeof onDismiss === "function") onDismiss();
+        }, 260);
+      }
+
+      card.addEventListener("mouseenter", pauseTimer);
+      card.addEventListener("mouseleave", resumeTimer);
+
+      refs.growlRegion.prepend(card);
+
+      if (duration > 0 && progressBar) {
+        requestAnimationFrame(() => {
+          progressBar.style.transform = "scaleX(1)";
+          requestAnimationFrame(() => {
+            startTimer(duration);
+          });
+        });
+      }
+
+      return { dismiss };
+    },
+    success(options) { return this.show({ ...options, type: "success" }); },
+    warning(options) { return this.show({ ...options, type: "warning" }); },
+    error(options) { return this.show({ ...options, type: "error" }); },
+    info(options) { return this.show({ ...options, type: "info" }); }
+  };
+
+  function checkCutoffEnding(track, actualDuration) {
+    if (!track || !actualDuration || actualDuration <= 0) return;
+    const trackId = String(track.id);
+    if (state.notifiedCutoffTracks.has(trackId)) return;
+
+    const maxBudget = Number(track.settings?.duration || 0);
+    if (maxBudget >= 15 && actualDuration >= (maxBudget - 2.5)) {
+      state.notifiedCutoffTracks.add(trackId);
+
+      window.setTimeout(() => {
+        if (state.playerTrack?.id !== track.id) return;
+        Growl.warning({
+          title: "최대 생성 길이(버짓 제한) 도달 감지",
+          message: `이 곡은 설정된 최대 길이(${Math.round(maxBudget)}초) 버짓을 모두 소진하여, 끝부분이 자연스럽지 않게 끊겼을 수 있습니다. 더 여유로운 곡 마무리를 위해 다음 생성 시 길이를 늘려보세요.`,
+          duration: 9000,
+          action: {
+            label: "길이 +30초 늘리기",
+            onClick: () => {
+              const curVal = Number(refs.durationInput.value) || 120;
+              const nextVal = Math.min(900, curVal + 30);
+              refs.durationInput.value = String(nextVal);
+              refs.advancedPanel.open = true;
+              refs.durationInput.focus();
+              refs.durationInput.scrollIntoView({ behavior: "smooth", block: "center" });
+              Growl.info({
+                title: "설정 변경됨",
+                message: `최대 생성 길이가 ${nextVal}초로 늘어났습니다.`,
+                duration: 3500
+              });
+            }
+          }
+        });
+      }, 2500);
+    }
+  }
+
+  const AudioVisualizer = {
+    canvas: null,
+    ctx: null,
+    audio: null,
+    audioCtx: null,
+    analyser: null,
+    sourceNode: null,
+    connected: false,
+    animId: null,
+    barCount: 32,
+    prevLevels: new Float32Array(32),
+    peakLevels: new Float32Array(32),
+    peakHold: new Float32Array(32),
+    freqData: null,
+    timeData: null,
+    ambientBass: 0,
+    ambientMid: 0,
+    ambientTreble: 0,
+    ambientEnergy: 0,
+    flowTime: 0,
+    lastFrameTime: 0,
+
+    init(canvasNode, audioElement) {
+      if (!canvasNode) return;
+      this.canvas = canvasNode;
+      this.ctx = canvasNode.getContext("2d");
+      this.audio = audioElement;
+      this.prevLevels.fill(2);
+      this.peakLevels.fill(2);
+      this.peakHold.fill(0);
+      this.render = this.render.bind(this);
+      this.drawBaseline();
+      this.freezeInPlace();
+      window.addEventListener("resize", () => {
+        if (!this.animId) this.freezeInPlace();
+      });
+    },
+
+    ensureAudioContext() {
+      if (this.connected || !this.audio) return;
+      try {
+        const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtxClass) return;
+        if (!this.audioCtx) {
+          this.audioCtx = new AudioCtxClass();
+        }
+        if (this.audioCtx.state === "suspended") {
+          this.audioCtx.resume().catch(() => {});
+        }
+        if (!this.sourceNode) {
+          this.analyser = this.audioCtx.createAnalyser();
+          this.analyser.fftSize = 256;
+          this.analyser.smoothingTimeConstant = 0.82;
+          this.sourceNode = this.audioCtx.createMediaElementSource(this.audio);
+          this.sourceNode.connect(this.analyser);
+          this.analyser.connect(this.audioCtx.destination);
+          this.connected = true;
+          this.freqData = new Uint8Array(this.analyser.frequencyBinCount);
+          this.timeData = new Uint8Array(this.analyser.fftSize);
+        }
+      } catch (err) {
+        console.warn("AudioContext init:", err);
+      }
+    },
+
+    start() {
+      this.ensureAudioContext();
+      if (this.audioCtx && this.audioCtx.state === "suspended") {
+        this.audioCtx.resume().catch(() => {});
+      }
+      this.lastFrameTime = performance.now();
+      if (this.animId) cancelAnimationFrame(this.animId);
+      this.animId = requestAnimationFrame(this.render);
+    },
+
+    pause() {
+      if (this.animId) {
+        // If render loop is active, render() will smoothly decay orbs & EQ bars down in place,
+        // then cleanly sleep the loop once baseline/resting state is reached.
+        return;
+      }
+      if (this.ambientEnergy > 0.005) {
+        this.lastFrameTime = performance.now();
+        this.animId = requestAnimationFrame(this.render);
+      } else {
+        this.freezeInPlace();
+        this.drawBaseline();
+      }
+    },
+
+    stop() {
+      if (this.animId) {
+        cancelAnimationFrame(this.animId);
+        this.animId = null;
+      }
+      this.drawBaseline();
+      this.freezeInPlace();
+    },
+
+    freezeInPlace() {
+      this.ambientBass = 0;
+      this.ambientMid = 0;
+      this.ambientTreble = 0;
+      this.ambientEnergy = 0;
+      const backdrop = refs.ambientBackdrop;
+      if (!backdrop) return;
+      const t = this.flowTime;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+
+      const flowX1 = (Math.sin(t * 0.48) * 0.36 + Math.cos(t * 0.21) * 0.16) * vw;
+      const flowY1 = (Math.cos(t * 0.36) * 0.32 + Math.sin(t * 0.17) * 0.14) * vh;
+
+      const flowX2 = (Math.cos(t * 0.40 + 2.2) * 0.36 + Math.sin(t * 0.19) * 0.16) * vw;
+      const flowY2 = (Math.sin(t * 0.33 + 1.9) * 0.32 + Math.cos(t * 0.24) * 0.14) * vh;
+
+      const flowX3 = (Math.sin(t * 0.54 + 4.3) * 0.30 + Math.cos(t * 0.28) * 0.14) * vw;
+      const flowY3 = (Math.cos(t * 0.44 + 3.6) * 0.28 + Math.sin(t * 0.20) * 0.14) * vh;
+
+      backdrop.style.transform = "scale(0.98)";
+
+      const orb1 = refs.ambientOrb1 || backdrop.querySelector(".ambient-orb-1");
+      if (orb1) {
+        orb1.style.transform = `translate(-50%, -50%) translate(${flowX1.toFixed(1)}px, ${flowY1.toFixed(1)}px) scale(0.65)`;
+        orb1.style.opacity = "0.35";
+        orb1.style.filter = "blur(65px)";
+      }
+
+      const orb2 = refs.ambientOrb2 || backdrop.querySelector(".ambient-orb-2");
+      if (orb2) {
+        orb2.style.transform = `translate(-50%, -50%) translate(${flowX2.toFixed(1)}px, ${flowY2.toFixed(1)}px) scale(0.62)`;
+        orb2.style.opacity = "0.32";
+        orb2.style.filter = "blur(65px)";
+      }
+
+      const orb3 = refs.ambientOrb3 || backdrop.querySelector(".ambient-orb-3");
+      if (orb3) {
+        orb3.style.transform = `translate(-50%, -50%) translate(${flowX3.toFixed(1)}px, ${flowY3.toFixed(1)}px) scale(0.58)`;
+        orb3.style.opacity = "0.30";
+      }
+
+      const grain = refs.ambientGrain || backdrop.querySelector(".ambient-grain");
+      if (grain) {
+        grain.style.opacity = "0.25";
+      }
+    },
+
+    resetAmbient() {
+      this.freezeInPlace();
+    },
+
+    drawBaseline() {
+      if (!this.ctx || !this.canvas) return;
+      const w = this.canvas.width;
+      const h = this.canvas.height;
+      this.ctx.clearRect(0, 0, w, h);
+      this.ctx.fillStyle = "rgba(245, 183, 156, 0.22)";
+      const barCount = this.barCount;
+      const gap = 3;
+      const totalGaps = (barCount - 1) * gap;
+      const barWidth = Math.floor((w - totalGaps) / barCount);
+      const startX = Math.floor((w - (barCount * barWidth + totalGaps)) / 2);
+
+      for (let i = 0; i < barCount; i++) {
+        const x = startX + i * (barWidth + gap);
+        this.ctx.beginPath();
+        if (typeof this.ctx.roundRect === "function") {
+          this.ctx.roundRect(x, h - 2, barWidth, 2, 1);
+        } else {
+          this.ctx.rect(x, h - 2, barWidth, 2);
+        }
+        this.ctx.fill();
+      }
+    },
+
+    render() {
+      if (!this.ctx || !this.canvas) return;
+      const isPlaying = Boolean(state.playerTrack) && !refs.player.paused && !refs.player.ended;
+      const now = performance.now();
+      const dt = this.lastFrameTime > 0 ? Math.min(0.1, (now - this.lastFrameTime) * 0.001) : 0.016;
+      this.lastFrameTime = now;
+      const w = this.canvas.width;
+      const h = this.canvas.height;
+      const barCount = this.barCount;
+      const gap = 3;
+      const totalGaps = (barCount - 1) * gap;
+      const barWidth = Math.floor((w - totalGaps) / barCount);
+      const startX = Math.floor((w - (barCount * barWidth + totalGaps)) / 2);
+
+      this.ctx.clearRect(0, 0, w, h);
+
+      if (this.connected && this.analyser) {
+        if (!this.freqData || this.freqData.length !== this.analyser.frequencyBinCount) {
+          this.freqData = new Uint8Array(this.analyser.frequencyBinCount);
+        }
+        this.analyser.getByteFrequencyData(this.freqData);
+        if (this.timeData) this.analyser.getByteTimeDomainData(this.timeData);
+      }
+
+      let rawBass = 0;
+      let rawMid = 0;
+      let rawTreble = 0;
+      let rawEnergy = 0;
+      let hasActiveLevels = false;
+      const binCount = this.freqData ? this.freqData.length : 0;
+
+      // Radiant EQ Gradient: Warm gold/amber at base -> Coral -> Radiant magenta/peach top
+      const barGrad = this.ctx.createLinearGradient(0, h, 0, 0);
+      barGrad.addColorStop(0, "#e9b77e");
+      barGrad.addColorStop(0.45, "#f58e66");
+      barGrad.addColorStop(1, "#ff5e78");
+      const idleColor = "rgba(245, 183, 156, 0.22)";
+
+      for (let i = 0; i < barCount; i++) {
+        let eqEnergy = 0;
+        if (isPlaying && binCount > 0) {
+          // Logarithmic perceptual grouping across 32 EQ frequency bands
+          const minBin = 1;
+          const maxBin = Math.min(binCount - 2, 90);
+          const r0 = Math.pow(i / barCount, 2.0);
+          const r1 = Math.pow((i + 1) / barCount, 2.0);
+          const startBin = Math.max(0, Math.floor(minBin + r0 * (maxBin - minBin)));
+          const endBin = Math.min(binCount - 1, Math.max(startBin + 1, Math.ceil(minBin + r1 * (maxBin - minBin))));
+
+          let sum = 0;
+          let count = 0;
+          for (let b = startBin; b <= endBin; b++) {
+            sum += this.freqData[b];
+            count++;
+          }
+          const avg = count > 0 ? (sum / count) / 255 : 0;
+          // Equal loudness compensation curve for EQ visualizer bars ONLY
+          const boost = 1.0 + Math.pow(i / barCount, 1.25) * 1.6;
+          eqEnergy = Math.min(1.0, avg * boost);
+
+          // Background orbs use pure raw acoustic frequencies without reverse loudness equalization
+          if (i < 8) rawBass += avg;
+          else if (i < 20) rawMid += avg;
+          else rawTreble += avg;
+          rawEnergy += avg;
+        }
+
+        const targetH = isPlaying ? Math.max(2, eqEnergy * (h - 2.5)) : 2;
+
+        // Snappy attack & silky exponential decay
+        if (targetH > this.prevLevels[i]) {
+          this.prevLevels[i] = this.prevLevels[i] * 0.2 + targetH * 0.8;
+        } else {
+          this.prevLevels[i] = Math.max(2, this.prevLevels[i] * 0.83);
+        }
+
+        const barH = this.prevLevels[i];
+        if (barH > 2.2) hasActiveLevels = true;
+
+        // Classic floating peak cap with gravity fall
+        if (barH >= this.peakLevels[i]) {
+          this.peakLevels[i] = barH;
+          this.peakHold[i] = 10;
+        } else {
+          if (this.peakHold[i] > 0) {
+            this.peakHold[i]--;
+          } else {
+            this.peakLevels[i] = Math.max(2, this.peakLevels[i] - 0.7);
+          }
+        }
+
+        const x = startX + i * (barWidth + gap);
+        const y = h - barH;
+
+        // Draw EQ bar
+        this.ctx.fillStyle = isPlaying && barH > 2.5 ? barGrad : idleColor;
+        this.ctx.beginPath();
+        if (typeof this.ctx.roundRect === "function") {
+          this.ctx.roundRect(x, y, barWidth, barH, [2, 2, 0, 0]);
+        } else {
+          this.ctx.rect(x, y, barWidth, barH);
+        }
+        this.ctx.fill();
+
+        // Draw Peak Cap
+        if (isPlaying && this.peakLevels[i] > 3.2) {
+          const peakY = Math.max(0, h - this.peakLevels[i] - 1);
+          this.ctx.fillStyle = "rgba(255, 235, 215, 0.92)";
+          this.ctx.fillRect(x, peakY, barWidth, 1.5);
+        }
+      }
+
+      // Pure raw acoustic normalization for ambient background animation
+      rawBass = rawBass / 8;
+      rawMid = rawMid / 12;
+      rawTreble = rawTreble / 12;
+      rawEnergy = rawEnergy / barCount;
+
+      // Asymmetrical Attack / Release envelope for a dynamic, dancing pump:
+      // Snaps open fast on beats, contracts cleanly between beats
+      const attack = 0.42;
+      const release = 0.14;
+
+      if (isPlaying) {
+        const bFactor = rawBass > this.ambientBass ? attack : release;
+        this.ambientBass += (rawBass - this.ambientBass) * bFactor;
+
+        const mFactor = rawMid > this.ambientMid ? attack : release;
+        this.ambientMid += (rawMid - this.ambientMid) * mFactor;
+
+        const tFactor = rawTreble > this.ambientTreble ? attack : release;
+        this.ambientTreble += (rawTreble - this.ambientTreble) * tFactor;
+
+        const eFactor = rawEnergy > this.ambientEnergy ? attack : release;
+        this.ambientEnergy += (rawEnergy - this.ambientEnergy) * eFactor;
+      } else {
+        this.ambientBass *= 0.85;
+        this.ambientMid *= 0.85;
+        this.ambientTreble *= 0.85;
+        this.ambientEnergy *= 0.85;
+      }
+
+      // Dynamic Ambient BG animation synchronized with music spectrum & beats
+      const backdrop = refs.ambientBackdrop;
+      if (backdrop) {
+        // Flow time advances ONLY while music is playing!
+        if (isPlaying) {
+          const flowSpeed = 0.35 + this.ambientBass * 0.50 + this.ambientEnergy * 0.25;
+          this.flowTime += dt * flowSpeed;
+        }
+
+        const t = this.flowTime;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+
+        // Free-flowing trajectories sweeping fluidly across the entire screen
+        const flowX1 = (Math.sin(t * 0.48) * 0.36 + Math.cos(t * 0.21) * 0.16) * vw;
+        const flowY1 = (Math.cos(t * 0.36) * 0.32 + Math.sin(t * 0.17) * 0.14) * vh;
+
+        const flowX2 = (Math.cos(t * 0.40 + 2.2) * 0.36 + Math.sin(t * 0.19) * 0.16) * vw;
+        const flowY2 = (Math.sin(t * 0.33 + 1.9) * 0.32 + Math.cos(t * 0.24) * 0.14) * vh;
+
+        const flowX3 = (Math.sin(t * 0.54 + 4.3) * 0.30 + Math.cos(t * 0.28) * 0.14) * vw;
+        const flowY3 = (Math.cos(t * 0.44 + 3.6) * 0.28 + Math.sin(t * 0.20) * 0.14) * vh;
+
+        // Dynamic contrast expansion: quiet moments contract down, loud hits burst open
+        const bassDynamic = Math.pow(Math.min(1.0, this.ambientBass * 1.6), 1.75);
+        const midDynamic = Math.pow(Math.min(1.0, this.ambientMid * 1.7), 1.75);
+        const energyDynamic = Math.pow(Math.min(1.0, this.ambientEnergy * 1.8), 1.85);
+        const trebleDynamic = Math.pow(Math.min(1.0, this.ambientTreble * 1.9), 1.75);
+
+        // Container scale pulse on bass hits
+        const bgScale = 0.98 + bassDynamic * 0.08;
+        backdrop.style.transform = `scale(${bgScale.toFixed(4)})`;
+
+        // Orb 1 (Deep Electric Violet / Purple): contracts to 0.65 on calm, swells to 1.45 on bass/808 hits!
+        const orb1 = refs.ambientOrb1 || backdrop.querySelector(".ambient-orb-1");
+        if (orb1) {
+          const s1 = 0.65 + bassDynamic * 0.80;
+          const op1 = 0.35 + bassDynamic * 0.60;
+          orb1.style.transform = `translate(-50%, -50%) translate(${flowX1.toFixed(1)}px, ${flowY1.toFixed(1)}px) scale(${s1.toFixed(3)})`;
+          orb1.style.opacity = Math.min(0.98, op1).toFixed(3);
+          orb1.style.filter = `blur(${(65 + bassDynamic * 40).toFixed(0)}px)`;
+        }
+
+        // Orb 2 (Amber Orange & Hot Magenta): contracts to 0.62, blooms to 1.40 on melody & mids!
+        const orb2 = refs.ambientOrb2 || backdrop.querySelector(".ambient-orb-2");
+        if (orb2) {
+          const s2 = 0.62 + midDynamic * 0.78;
+          const op2 = 0.32 + midDynamic * 0.62;
+          orb2.style.transform = `translate(-50%, -50%) translate(${flowX2.toFixed(1)}px, ${flowY2.toFixed(1)}px) scale(${s2.toFixed(3)})`;
+          orb2.style.opacity = Math.min(0.98, op2).toFixed(3);
+          orb2.style.filter = `blur(${(65 + midDynamic * 40).toFixed(0)}px)`;
+        }
+
+        // Orb 3 (Artwork Color Bloom): contracts to 0.58, bursts to 1.36 on volume swells!
+        const orb3 = refs.ambientOrb3 || backdrop.querySelector(".ambient-orb-3");
+        if (orb3) {
+          const s3 = 0.58 + energyDynamic * 0.78;
+          const op3 = 0.30 + energyDynamic * 0.65;
+          orb3.style.transform = `translate(-50%, -50%) translate(${flowX3.toFixed(1)}px, ${flowY3.toFixed(1)}px) scale(${s3.toFixed(3)})`;
+          orb3.style.opacity = Math.min(0.95, op3).toFixed(3);
+        }
+
+        // Sparkle / Film Grain layer reacts dynamically to treble transients (hi-hats, shimmer)
+        const grain = refs.ambientGrain || backdrop.querySelector(".ambient-grain");
+        if (grain) {
+          const grainOp = 0.25 + trebleDynamic * 0.65;
+          grain.style.opacity = Math.min(0.90, grainOp).toFixed(3);
+        }
+      }
+
+      if (isPlaying || hasActiveLevels || this.ambientEnergy > 0.005) {
+        this.animId = requestAnimationFrame(this.render);
+      } else {
+        this.animId = null;
+        this.drawBaseline();
+        this.freezeInPlace();
+      }
+    }
+  };
+
+  function showToast(message, tone = "success") {
+    Growl.show({
+      type: tone === "error" ? "error" : "success",
+      message: message,
+      duration: tone === "error" ? 6000 : 4500
+    });
+  }
+
+  const QueueManager = {
+    timer: null,
+
+    init() {
+      this.bindEvents();
+      this.poll(true);
+    },
+
+    bindEvents() {
+      if (refs.queuePipPill) {
+        refs.queuePipPill.addEventListener("click", () => this.togglePip());
+      }
+      if (refs.queuePipBtnClose) {
+        refs.queuePipBtnClose.addEventListener("click", () => this.togglePip(false));
+      }
+      if (refs.queuePipBtnMinimize) {
+        refs.queuePipBtnMinimize.addEventListener("click", () => this.togglePip(false));
+      }
+      if (refs.queuePipBtnMaximize) {
+        refs.queuePipBtnMaximize.addEventListener("click", () => {
+          this.togglePip(false);
+          window.location.hash = "queue";
+        });
+      }
+      if (refs.queuePipBtnRefresh) {
+        refs.queuePipBtnRefresh.addEventListener("click", () => this.poll(true));
+      }
+      if (refs.queuePageRefresh) {
+        refs.queuePageRefresh.addEventListener("click", () => this.poll(true));
+      }
+      if (refs.queuePageOpenPip) {
+        refs.queuePageOpenPip.addEventListener("click", () => {
+          this.togglePip(true);
+          window.location.hash = "create";
+        });
+      }
+      if (refs.navQueueLink) {
+        refs.navQueueLink.addEventListener("click", () => {
+          this.togglePip(false);
+        });
+      }
+      if (refs.mobileNavQueue) {
+        refs.mobileNavQueue.addEventListener("click", () => {
+          this.togglePip(false);
+        });
+      }
+    },
+
+    togglePip(forceState) {
+      if (!refs.queuePipWindow || !refs.queuePipPill) return;
+      const isOpen = typeof forceState === "boolean" ? forceState : refs.queuePipWindow.hidden;
+      refs.queuePipWindow.hidden = !isOpen;
+      refs.queuePipPill.setAttribute("aria-expanded", String(isOpen));
+      if (isOpen) {
+        this.poll(true);
+      }
+    },
+
+    async poll(immediate = false) {
+      if (this.timer) {
+        window.clearTimeout(this.timer);
+        this.timer = null;
+      }
+      try {
+        const data = await fetchJson("/api/queue");
+        if (data && typeof data === "object") {
+          state.queue = {
+            running: Array.isArray(data.running) ? data.running : [],
+            pending: Array.isArray(data.pending) ? data.pending : [],
+            recent: Array.isArray(data.recent) ? data.recent : [],
+            summary: data.summary || { running_count: 0, pending_count: 0, total_active: 0 },
+            engine: data.engine || { status: "offline", device: "", vram: "" }
+          };
+          this.render();
+        }
+      } catch (err) {
+        // Keep calm on transient network error
+      } finally {
+        const hasActive = (state.queue.summary?.total_active || 0) > 0;
+        const isPipOpen = refs.queuePipWindow && !refs.queuePipWindow.hidden;
+        const isQueueView = state.view === "queue";
+        const interval = (hasActive || isPipOpen || isQueueView) ? 2500 : 10000;
+        this.timer = window.setTimeout(() => this.poll(), interval);
+      }
+    },
+
+    render() {
+      const { running, pending, recent, summary, engine } = state.queue;
+      const totalActive = summary.total_active || 0;
+      const runningCount = summary.running_count || 0;
+      const pendingCount = summary.pending_count || 0;
+
+      // 1. Sidebar & Mobile Badges
+      if (refs.navQueueBadge) {
+        refs.navQueueBadge.hidden = totalActive === 0;
+        refs.navQueueBadge.textContent = String(totalActive);
+      }
+
+      // 2. PIP Pill
+      if (refs.queuePipPill) {
+        refs.queuePipPill.classList.toggle("has-active", totalActive > 0);
+        if (refs.queuePipDot) {
+          refs.queuePipDot.classList.toggle("is-active", totalActive > 0);
+        }
+        if (refs.queuePipPillCount) {
+          refs.queuePipPillCount.hidden = totalActive === 0;
+          refs.queuePipPillCount.textContent = String(totalActive);
+        }
+        if (refs.queuePipPillLabel) {
+          if (runningCount > 0 && pendingCount > 0) {
+            refs.queuePipPillLabel.textContent = `생성 중 ${runningCount} · 대기 ${pendingCount}`;
+          } else if (runningCount > 0) {
+            refs.queuePipPillLabel.textContent = `생성 중 ${runningCount}건`;
+          } else if (pendingCount > 0) {
+            refs.queuePipPillLabel.textContent = `대기 중 ${pendingCount}건`;
+          } else {
+            refs.queuePipPillLabel.textContent = "서버 대기열";
+          }
+        }
+      }
+
+      // 3. PIP Window Head
+      if (refs.queuePipHeadStat) {
+        if (totalActive === 0) {
+          refs.queuePipHeadStat.textContent = "대기열 비어있음 (즉시 생성 가능)";
+        } else {
+          refs.queuePipHeadStat.textContent = `생성 ${runningCount}건 · 대기 ${pendingCount}건`;
+        }
+      }
+
+      // 4. Running & Pending counts
+      if (refs.queuePipRunningNum) refs.queuePipRunningNum.textContent = String(runningCount);
+      if (refs.queuePipPendingNum) refs.queuePipPendingNum.textContent = String(pendingCount);
+
+      // 5. Render Running Box
+      if (refs.queuePipRunningBox) {
+        refs.queuePipRunningBox.innerHTML = "";
+        if (running.length === 0) {
+          refs.queuePipRunningBox.append(
+            element("div", { className: "queue-empty-text" }, ["현재 실행 중인 작업이 없습니다."])
+          );
+        } else {
+          running.forEach((job) => refs.queuePipRunningBox.append(this.createRunningCard(job)));
+        }
+      }
+
+      // 6. Render Pending Box
+      if (refs.queuePipPendingBox) {
+        refs.queuePipPendingBox.innerHTML = "";
+        if (pending.length === 0) {
+          refs.queuePipPendingBox.append(
+            element("div", { className: "queue-empty-text" }, ["대기 중인 요청이 없습니다."])
+          );
+        } else {
+          pending.forEach((job, idx) => refs.queuePipPendingBox.append(this.createPendingRow(job, idx + 1)));
+        }
+      }
+
+      // 7. Render Recent Box
+      if (refs.queuePipRecentBox) {
+        refs.queuePipRecentBox.innerHTML = "";
+        if (recent.length === 0) {
+          refs.queuePipRecentBox.append(
+            element("div", { className: "queue-empty-text" }, ["최근 완료된 작업이 없습니다."])
+          );
+        } else {
+          recent.forEach((track) => refs.queuePipRecentBox.append(this.createRecentRow(track)));
+        }
+      }
+
+      // 8. GPU & Engine Info
+      if (refs.queuePipDevice) {
+        const engText = engine.status === "busy" ? "엔진 가동 중" : engine.status === "idle" ? "엔진 대기 중" : "엔진 오프라인";
+        const devText = engine.device ? ` · ${engine.device}` : "";
+        const vramText = engine.vram ? ` (${engine.vram})` : "";
+        refs.queuePipDevice.textContent = `${engText}${devText}${vramText}`;
+      }
+
+      // 9. Synchronize Dedicated Queue Page (if open or present)
+      if (refs.queuePagePendingCount) refs.queuePagePendingCount.textContent = String(pendingCount);
+      if (refs.queuePageEngineStatus) {
+        refs.queuePageEngineStatus.textContent = engine.status === "busy" ? "GPU 엔진 생성 가동 중" : engine.status === "idle" ? "GPU 엔진 대기 중 (즉시 생성 가능)" : "GPU 엔진 오프라인";
+      }
+      if (refs.queuePageGpu) {
+        refs.queuePageGpu.textContent = engine.device ? `${engine.device} ${engine.vram ? '· ' + engine.vram : ''}` : "";
+      }
+      if (refs.queuePageRunning) {
+        refs.queuePageRunning.innerHTML = "";
+        if (running.length === 0) {
+          refs.queuePageRunning.append(
+            element("div", { className: "queue-empty-text" }, ["현재 생성 중인 음악이 없습니다."])
+          );
+        } else {
+          running.forEach((job) => refs.queuePageRunning.append(this.createRunningCard(job)));
+        }
+      }
+      if (refs.queuePagePending) {
+        refs.queuePagePending.innerHTML = "";
+        if (pending.length === 0) {
+          refs.queuePagePending.append(
+            element("div", { className: "queue-empty-text" }, ["대기열이 비어 있습니다."])
+          );
+        } else {
+          pending.forEach((job, idx) => refs.queuePagePending.append(this.createPendingRow(job, idx + 1)));
+        }
+      }
+      if (refs.queuePageRecent) {
+        refs.queuePageRecent.innerHTML = "";
+        if (recent.length === 0) {
+          refs.queuePageRecent.append(
+            element("div", { className: "queue-empty-text" }, ["최근 완료된 곡이 없습니다."])
+          );
+        } else {
+          recent.forEach((track) => refs.queuePageRecent.append(this.createRecentRow(track)));
+        }
+      }
+    },
+
+    createRunningCard(job) {
+      const modeLabel = job.mode === "cover" ? "커버" : "새 곡";
+      const progress = job.progress || {};
+      const current = Number(progress.current) || 0;
+      const total = Number(progress.total) || 100;
+      const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
+      const phaseNames = {
+        abc: "가사/악곡 계획 및 기보 생성",
+        music: "보컬 & 멜로디 오디오 생성",
+        rendering: "오디오 고음질 렌더링",
+        finishing: "결과 파일 인코딩 및 저장",
+        preparing: "엔진 준비 중"
+      };
+      const phaseText = phaseNames[progress.phase] || "생성 진행 중...";
+      const rateText = progress.rate ? ` · ${progress.rate} tok/s` : "";
+
+      const card = element("div", { className: "queue-item-card is-active-gen" }, [
+        element("div", { className: "queue-item-top" }, [
+          element("strong", { className: "queue-item-title", text: job.title || "새로운 음악" }),
+          element("span", { className: "queue-item-mode", text: modeLabel })
+        ]),
+        element("div", { className: "queue-item-meta" }, [
+          element("span", {
+            className: `queue-creator-tag ${job.is_mine ? "is-mine" : ""}`,
+            text: job.is_mine ? `${job.creator || "나"} (내 요청)` : (job.creator || "익명")
+          }),
+          element("span", { text: `· ${formatRelative(job.created_at || job.createdAt)}` })
+        ]),
+        element("div", { className: "queue-progress-bar-wrap" }, [
+          element("div", { className: "queue-progress-bar-fill", style: `width: ${pct}%` })
+        ]),
+        element("div", { className: "queue-progress-status" }, [
+          element("span", { text: `${phaseText}${rateText}` }),
+          element("strong", { text: `${pct}%` })
+        ])
+      ]);
+      return card;
+    },
+
+    createPendingRow(job, position) {
+      const modeLabel = job.mode === "cover" ? "커버" : "새 곡";
+      return element("div", { className: "queue-pending-row" }, [
+        element("div", { className: "queue-pending-pos", text: `#${position}` }),
+        element("div", { className: "queue-pending-info" }, [
+          element("div", { className: "queue-pending-title", text: job.title || "새로운 음악" }),
+          element("div", { className: "queue-pending-sub" }, [
+            element("span", {
+              className: `queue-creator-tag ${job.is_mine ? "is-mine" : ""}`,
+              text: job.is_mine ? `${job.creator || "나"} (내 요청)` : (job.creator || "회원")
+            }),
+            element("span", { text: `· ${modeLabel}` }),
+            element("span", { text: `· ${formatRelative(job.created_at || job.createdAt)}` })
+          ])
+        ])
+      ]);
+    },
+
+    createRecentRow(track) {
+      const isPlayable = Boolean(track.audio_url || track.audioUrl);
+      const row = element("div", { className: "queue-recent-item" }, [
+        element("span", { className: "queue-recent-title", text: track.title || "완성된 음악" }),
+        isPlayable
+          ? element("button", {
+              className: "queue-recent-play",
+              type: "button",
+              text: "재생",
+              on: {
+                click: () => playTrack(normalizeJob(track), state.jobs.filter((j) => j.status === "completed"))
+              }
+            })
+          : element("span", { className: "queue-recent-play", text: track.status === "failed" ? "실패" : "완료" })
+      ]);
+      return row;
+    }
+  };
+
+  function bindEvents() {
+    refs.workspaceSearch.addEventListener("input", renderJobs);
+    refs.workspaceFilter.addEventListener("change", renderJobs);
+    refs.refreshJobs.addEventListener("click", () => {
+      loadJobs({ reset: true });
+      if (typeof QueueManager !== "undefined") QueueManager.poll(true);
+    });
+    if (refs.jobsLoadMore) {
+      refs.jobsLoadMore.addEventListener("click", () => loadMoreJobs());
+    }
+    refs.lyricsInput.addEventListener("input", updateLyricsCount);
+    refs.player.crossOrigin = "anonymous";
+    refs.player.volume = Number(refs.playerVolume.value);
+    refs.player.addEventListener("play", () => {
+      AudioVisualizer.ensureAudioContext();
+      AudioVisualizer.start();
+    });
+    refs.playerToggle.addEventListener("click", () => {
+      if (!state.playerTrack) return;
+      if (refs.player.paused) resumePlayer();
+      else refs.player.pause();
+    });
+    refs.playerPrev.addEventListener("click", () => stepPlayer(-1));
+    refs.playerNext.addEventListener("click", () => stepPlayer(1));
+    refs.playerVolume.addEventListener("input", () => { refs.player.volume = Number(refs.playerVolume.value); });
+    refs.playerProgress.addEventListener("input", () => {
+      if (Number.isFinite(refs.player.duration)) refs.player.currentTime = Number(refs.playerProgress.value) / 1000 * refs.player.duration;
+      syncPlayerTime();
+    });
+    ["play", "pause", "ended"].forEach((event) => refs.player.addEventListener(event, syncPlayerButtons));
+    ["timeupdate", "loadedmetadata", "durationchange", "emptied"].forEach((event) => refs.player.addEventListener(event, syncPlayerTime));
+    refs.player.addEventListener("ended", () => stepPlayer(1));
+    refs.player.addEventListener("error", () => {
+      showToast("오디오를 불러오지 못했어요. 연결 상태를 확인하고 다시 시도해 주세요.", "error");
+      syncPlayerButtons();
+    });
+    window.addEventListener("hashchange", renderRoute);
+    refs.modeOptions.forEach((button) => button.addEventListener("click", () => setMode(button.dataset.modeOption)));
+    refs.composerForm.addEventListener("submit", submitGeneration);
+    refs.randomSeed.addEventListener("change", syncSeedState);
+    refs.advancedReset.addEventListener("click", resetAdvancedSettings);
+    refs.planToggle.addEventListener("click", () => {
+      const enabled = refs.planToggle.getAttribute("aria-checked") !== "true";
+      refs.planToggle.setAttribute("aria-checked", String(enabled));
+      refs.planToggle.classList.toggle("is-on", enabled);
+      syncPlanState();
+    });
+    refs.instrumentalToggle.addEventListener("click", () => setInstrumental(!state.instrumental));
+    refs.audioFile.addEventListener("change", () => selectAudioFile(refs.audioFile.files[0]));
+    refs.removeAudio.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      resetAudioSelection();
+      refs.dropzone.focus();
+    });
+    refs.dropzone.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        refs.audioFile.click();
+      }
+    });
+    ["dragenter", "dragover"].forEach((eventName) => refs.dropzone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      refs.dropzone.classList.add("is-dragging");
+    }));
+    ["dragleave", "drop"].forEach((eventName) => refs.dropzone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      refs.dropzone.classList.remove("is-dragging");
+    }));
+    refs.dropzone.addEventListener("drop", (event) => selectAudioFile(event.dataTransfer.files[0]));
+    $$("[data-suggestion]").forEach((button) => button.addEventListener("click", () => appendSuggestion(button.dataset.suggestion)));
+    refs.librarySearch.addEventListener("input", () => {
+      state.library.query = refs.librarySearch.value;
+      refs.clearSearch.hidden = !state.library.query;
+      if (state.libraryDebounce) window.clearTimeout(state.libraryDebounce);
+      state.libraryDebounce = window.setTimeout(() => loadLibrary(), 320);
+    });
+    refs.clearSearch.addEventListener("click", () => {
+      refs.librarySearch.value = "";
+      state.library.query = "";
+      refs.clearSearch.hidden = true;
+      loadLibrary();
+      refs.librarySearch.focus();
+    });
+    refs.libraryFilters.forEach((button) => button.addEventListener("click", () => {
+      state.library.mode = button.dataset.libraryMode;
+      refs.libraryFilters.forEach((filter) => {
+        const selected = filter === button;
+        filter.classList.toggle("is-selected", selected);
+        filter.setAttribute("aria-pressed", String(selected));
+      });
+      loadLibrary();
+    }));
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !refs.toastRegion.hidden) hideToast();
+    });
+  }
+
+  function init() {
+    AudioVisualizer.init(refs.playerVisualizer, refs.player);
+    setHealthStatus(false, false);
+    setMode("original");
+    syncSeedState();
+    syncPlanState();
+    setInstrumental(false);
+    bindEvents();
+    setupJobsInfiniteScroll();
+    renderJobs();
+    renderRoute();
+    checkHealth();
+    window.setInterval(checkHealth, 15000);
+    QueueManager.init();
+    loadJobs({ initial: true });
+  }
+
+  if (window.yue2Auth?.ready) init();
+  else window.addEventListener("yue2-ready", init, { once: true });
+})();

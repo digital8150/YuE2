@@ -1,0 +1,30 @@
+# Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache & artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# ComfyUI (external engine & model weights)
+ComfyUI/
+
+# Studio Database & Backups
+yue2_app/data/*.sqlite3*
+!yue2_app/data/.gitkeep
+
+# Operating System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
