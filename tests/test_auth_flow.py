@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from aiohttp import FormData
 from aiohttp.test_utils import TestClient, TestServer
 
 from yue2_app.repository import Repository
@@ -29,6 +30,32 @@ class AuthFlowTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.close()
         self.temp.cleanup()
+
+    async def test_sessions_survive_another_login_and_logout_independently(self):
+        anonymous = await self.client.get("/api/auth/me")
+        self.assertEqual(anonymous.status, 200)
+        self.assertEqual((await anonymous.json())["user"], None)
+        self.assertEqual((await self.client.get("/api/queue")).status, 401)
+
+        auth = self.app["auth"]
+        admin = auth.create_initial_admin("captain", "Captain", "first-password-123")
+        first_token, first_csrf = auth.create_session(admin.id)
+        second_token, _ = auth.create_session(admin.id)
+        first_cookie = {"Cookie": f"yue2_session={first_token}"}
+        second_cookie = {"Cookie": f"yue2_session={second_token}"}
+
+        for cookie in (first_cookie, second_cookie):
+            response = await self.client.get("/api/auth/me", headers=cookie)
+            self.assertEqual(response.status, 200)
+            self.assertEqual((await response.json())["user"]["username"], "captain")
+            self.assertEqual((await self.client.get("/api/queue", headers=cookie)).status, 200)
+
+        logout = await self.client.post(
+            "/api/auth/logout", headers={**first_cookie, "X-Yue2-CSRF": first_csrf}
+        )
+        self.assertEqual(logout.status, 200)
+        self.assertIsNone((await (await self.client.get("/api/auth/me", headers=first_cookie)).json())["user"])
+        self.assertEqual((await self.client.get("/api/queue", headers=second_cookie)).status, 200)
 
     async def test_invite_code_onboarding_and_shared_attribution(self):
         self.assertEqual((await self.client.get("/api/auth/setup-status")).status, 200)
@@ -95,7 +122,14 @@ class AuthFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job["creator"], "동아리원 (@member1)")
         self.repo.set_output(job["id"], filename="song.mp3")
         library = await (await self.client.get("/api/library")).json()
-        self.assertEqual(library[0]["creator"], "동아리원 (@member1)")
+        self.assertEqual(library, [])
+        publish = FormData()
+        publish.add_field("title", "공유 곡", content_type="text/plain")
+        response = await self.client.post(f"/api/tracks/{job['id']}/publish", data=publish,
+                                          headers={"X-Yue2-CSRF": member_csrf})
+        self.assertEqual(response.status, 200, await response.text())
+        library = await (await self.client.get("/api/library")).json()
+        self.assertEqual(library[0]["creator"], "동아리원")
 
         # Member logs out
         self.assertEqual((await self.client.post("/api/auth/logout", headers={"X-Yue2-CSRF": member_csrf})).status, 200)

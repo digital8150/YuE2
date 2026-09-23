@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import math
 import mimetypes
 import os
@@ -13,11 +14,13 @@ import re
 import tempfile
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
 
 from aiohttp import web
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .auth import AuthStore, SESSION_DAYS, User
 from .comfy_client import (
@@ -26,6 +29,7 @@ from .comfy_client import (
     ComfyResponseError,
 )
 from .repository import Job, Repository
+from .audio_metadata import prompt_from_mp3, recipe_from_prompt
 from .workflow_builder import build_workflow
 
 
@@ -342,7 +346,11 @@ def _public_job(job: Job, client: ComfyClient | None = None) -> dict[str, Any]:
         "settings": dict(job.settings),
         "source_filename": job.source_filename,
         "creator": job.creator_name or "이전 작업",
+        "artist_id": job.artist_id,
         "error": job.error,
+        "published": job.published_at is not None,
+        "published_title": job.published_title,
+        "cover_url": f"/api/tracks/{job.id}/cover" if job.published_at and job.cover_filename else None,
     }
     if job.status == "completed":
         result["audio_url"] = f"/api/tracks/{job.id}/audio"
@@ -353,6 +361,63 @@ def _public_job(job: Job, client: ComfyClient | None = None) -> dict[str, Any]:
         if progress:
             result["progress"] = progress
     return result
+
+
+def _public_library_job(job: Job, repository: Repository | None = None) -> dict[str, Any]:
+    result = _public_job(job)
+    result["title"] = job.published_title or result["title"]
+    artist = repository.get_artist(job.artist_id) if repository and job.artist_id is not None else None
+    result["creator"] = artist["artist_name"] if artist else (job.creator_name or "이전 작업").split(" (@")[0]
+    result["artist_id"] = job.artist_id
+    result["album_id"] = job.album_id
+    result["play_count"] = job.play_count
+    album = repository.get_album(job.album_id) if repository and job.album_id else None
+    result["cover_url"] = (f"/api/tracks/{job.id}/cover?v={job.cover_filename}" if job.cover_filename else
+                           f"/api/albums/{job.album_id}/cover?v={album['cover_filename']}" if album and album["cover_filename"] else None)
+    # Generation inputs are read from the MP3 only when a listener chooses to reuse them.
+    result.pop("seed", None)
+    result.pop("settings", None)
+    result.pop("source_filename", None)
+    result.pop("published_title", None)
+    return result
+
+
+def _public_album(album: dict[str, Any], repository: Repository) -> dict[str, Any]:
+    artist = repository.get_artist(album["artist_id"])
+    tracks = repository.list_artist_tracks(album["artist_id"], 1)
+    fallback = (tracks[0].creator_name or "아티스트").split(" (@")[0] if tracks else "아티스트"
+    return {
+        "id": album["id"], "title": album["title"], "description": album["description"],
+        "artist_id": album["artist_id"], "artist_name": artist["artist_name"] if artist else fallback,
+        "cover_url": f"/api/albums/{album['id']}/cover?v={album['cover_filename']}" if album["cover_filename"] else None,
+        "track_count": album["track_count"], "published_at": album["published_at"],
+        "created_at": album["created_at"],
+    }
+
+
+def _public_artist(artist_id: int, repository: Repository, fallback_name: str = "아티스트") -> dict[str, Any]:
+    profile = repository.get_artist(artist_id)
+    tracks = repository.list_artist_tracks(artist_id, 100)
+    if profile:
+        name = profile["artist_name"]
+    elif tracks:
+        name = (tracks[0].creator_name or fallback_name).split(" (@")[0]
+    else:
+        name = fallback_name
+    return {
+        "id": artist_id, "name": name, "bio": profile["bio"] if profile else "",
+        "avatar_url": f"/api/artists/{artist_id}/avatar?v={profile['avatar_filename']}" if profile and profile["avatar_filename"] else None,
+        "banner_url": f"/api/artists/{artist_id}/banner?v={profile['banner_filename']}" if profile and profile["banner_filename"] else None,
+        "track_count": len(tracks),
+    }
+
+
+def _may_manage(job: Job, user: User) -> bool:
+    return job.creator_id == user.id or user.role == "admin" and job.creator_id is None
+
+
+def _may_read(job: Job, user: User) -> bool:
+    return _may_manage(job, user) or (job.published_at is not None and job.status == "completed")
 
 
 async def _sync_job(app: web.Application, job: Job) -> Job:
@@ -391,16 +456,134 @@ async def _sync_job(app: web.Application, job: Job) -> Job:
             if isinstance(client, ComfyClient):
                 client.clear_progress(job.prompt_id)
         elif status in {"queued", "running"}:
-            repository.set_status(job.id, status)
+            if status != job.status and not (job.status == "running" and status == "queued"):
+                repository.set_status(job.id, status)
     except Exception:
         return job
-    return repository.get_job(job.id) or job
+    updated = repository.get_job(job.id) or job
+    if updated.status != job.status:
+        if updated.status in {"completed", "failed", "cancelled"}:
+            app["prompt_jobs"].pop(job.prompt_id, None)
+            app["pending_progress"].pop(job.id, None)
+            app["last_progress"].pop(job.id, None)
+        await _broadcast_job(app, updated)
+    return updated
 
 
 async def _sync_all(app: web.Application) -> None:
     repository: Repository = app["repository"]
     for job in repository.list_nonterminal():
         await _sync_job(app, job)
+
+
+async def _broadcast(app: web.Application, payload: dict[str, Any]) -> None:
+    sockets = tuple(app["event_sockets"].items())
+    if not sockets:
+        return
+    event_job = app["repository"].get_job(payload["job"]["id"]) if payload.get("type") == "job" else None
+    progress_jobs = ({job_id: app["repository"].get_job(job_id) for job_id in payload["updates"]}
+                     if payload.get("type") == "progress" else {})
+    outgoing = []
+    for socket, user in sockets:
+        filtered = payload
+        if payload.get("type") == "job":
+            if event_job is None or not _may_manage(event_job, user):
+                continue
+        elif payload.get("type") == "progress":
+            updates = {job_id: progress for job_id, progress in payload["updates"].items()
+                       if progress_jobs[job_id] is not None and _may_manage(progress_jobs[job_id], user)}
+            if not updates:
+                continue
+            filtered = {"type": "progress", "updates": updates}
+        outgoing.append((socket, filtered))
+    results = await asyncio.gather(*(socket.send_json(item) for socket, item in outgoing), return_exceptions=True)
+    for (socket, _), result in zip(outgoing, results):
+        if isinstance(result, Exception):
+            app["event_sockets"].pop(socket, None)
+
+
+async def _broadcast_job(app: web.Application, job: Job) -> None:
+    await _broadcast(app, {"type": "job", "job": _public_job(job, app["comfy"])})
+
+
+def _on_comfy_event(app: web.Application, event: dict[str, Any]) -> None:
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return
+    prompt_id = str(data.get("prompt_id") or "")
+    job_id = app["prompt_jobs"].get(prompt_id)
+    if not job_id:
+        return
+    kind = event.get("type")
+    if kind in {"progress", "executing"}:
+        progress = app["comfy"].progress_for(prompt_id)
+        if progress and progress != app["pending_progress"].get(job_id, app["last_progress"].get(job_id)):
+            app["pending_progress"][job_id] = dict(progress)
+    if kind in {"execution_start", "executing"} and data.get("node") is not None:
+        job = app["repository"].get_job(job_id)
+        if job is not None and job.status == "queued":
+            app["repository"].set_status(job_id, "running")
+            updated = app["repository"].get_job(job_id)
+            if updated is not None:
+                asyncio.create_task(_broadcast_job(app, updated))
+    if kind in {"execution_success", "execution_error", "execution_interrupted"} or (kind == "executing" and data.get("node") is None):
+        if job_id not in app["finish_tasks"]:
+            task = asyncio.create_task(_sync_finished_prompt(app, job_id))
+            app["finish_tasks"][job_id] = task
+            task.add_done_callback(lambda _task: app["finish_tasks"].pop(job_id, None))
+
+
+async def _sync_finished_prompt(app: web.Application, job_id: str) -> None:
+    # ComfyUI can emit the final socket event just before history is committed.
+    for delay in (0.15, 0.35, 0.75):
+        await asyncio.sleep(delay)
+        job = app["repository"].get_job(job_id)
+        if job is None or job.status in {"completed", "failed", "cancelled"}:
+            return
+        updated = await _sync_job(app, job)
+        if updated.status in {"completed", "failed", "cancelled"}:
+            return
+
+
+async def _flush_progress(app: web.Application) -> None:
+    while True:
+        await asyncio.sleep(0.1)
+        pending = app["pending_progress"]
+        if pending:
+            updates = dict(pending)
+            pending.clear()
+            app["last_progress"].update(updates)
+            await _broadcast(app, {"type": "progress", "updates": updates})
+
+
+async def _reconcile_jobs(app: web.Application) -> None:
+    while True:
+        await asyncio.sleep(5)
+        for job_id in tuple(app["prompt_jobs"].values()):
+            job = app["repository"].get_job(job_id)
+            if job is not None:
+                await _sync_job(app, job)
+
+
+async def job_events(request: web.Request) -> web.StreamResponse:
+    origin = request.headers.get("Origin")
+    if origin:
+        hosts = {request.host, request.headers.get("Host", ""), request.headers.get("X-Forwarded-Host", "")}
+        allowed = {f"{scheme}://{host}" for scheme in ("http", "https") for host in hosts if host}
+        public_origin = request.app.get("public_origin")
+        if public_origin:
+            allowed.add(public_origin)
+        if origin.rstrip("/") not in allowed:
+            return _error("허용되지 않은 출처입니다.", 403)
+    socket = web.WebSocketResponse(heartbeat=30)
+    await socket.prepare(request)
+    request.app["event_sockets"][socket] = request["user"]
+    try:
+        async for _ in socket:
+            pass
+    finally:
+        request.app["event_sockets"].pop(socket, None)
+    return socket
 
 
 async def health(request: web.Request) -> web.Response:
@@ -496,7 +679,11 @@ async def login(request: web.Request) -> web.Response:
 
 
 async def me(request: web.Request) -> web.Response:
-    return web.json_response({"user": _public_user(request["user"]), "csrf_token": request["csrf_token"]})
+    session = request.app["auth"].session(request.cookies.get("yue2_session", ""))
+    if session is None:
+        return web.json_response({"user": None, "csrf_token": ""})
+    user, csrf_token = session
+    return web.json_response({"user": _public_user(user), "csrf_token": csrf_token})
 
 
 async def logout(request: web.Request) -> web.Response:
@@ -612,7 +799,7 @@ async def access_control(request: web.Request, handler):
             return _error("허용되지 않은 출처입니다.", 403)
         if request.headers.get("Sec-Fetch-Site") == "cross-site" and not _is_allowed_origin(request, origin):
             return _error("허용되지 않은 출처입니다.", 403)
-    if not path.startswith("/api/") or path in {"/api/auth/register", "/api/auth/login", "/api/auth/setup-status", "/api/auth/setup"}:
+    if not path.startswith("/api/") or path in {"/api/auth/register", "/api/auth/login", "/api/auth/setup-status", "/api/auth/setup", "/api/auth/me"}:
         return await handler(request)
     session = request.app["auth"].session(request.cookies.get("yue2_session", ""))
     if session is None:
@@ -694,6 +881,8 @@ async def create_generation(request: web.Request) -> web.Response:
         )
     except Exception:
         return _error("요청을 저장하지 못했습니다. 다시 시도해 주세요.", 500)
+    request.app["prompt_jobs"][prompt_id] = job.id
+    await _broadcast_job(request.app, job)
     return web.json_response(_public_job(job, client), status=202)
 
 
@@ -711,8 +900,10 @@ async def list_jobs(request: web.Request) -> web.Response:
     if offset < 0:
         return _error(INPUT_ERROR, 400)
     repository: Repository = request.app["repository"]
-    jobs = repository.list_latest(limit=limit, offset=offset)
-    total = repository.count_jobs()
+    creator_id = request["user"].id
+    include_legacy = request["user"].role == "admin"
+    jobs = repository.list_latest(limit=limit, offset=offset, creator_id=creator_id, include_legacy=include_legacy)
+    total = repository.count_jobs(creator_id=creator_id, include_legacy=include_legacy)
     has_more = (offset + len(jobs)) < total
 
     public_jobs = [_public_job(job, request.app["comfy"]) for job in jobs]
@@ -770,6 +961,8 @@ async def get_queue_status(request: web.Request) -> web.Response:
     pending_list: list[dict[str, Any]] = []
 
     for job in active_jobs:
+        if not _may_manage(job, current_user):
+            continue
         pub = _public_job(job, client)
         pub["is_mine"] = bool(current_user_id and job.creator_id == current_user_id)
         if job.status == "running" or (job.prompt_id and job.prompt_id in running_prompt_ids):
@@ -813,7 +1006,7 @@ async def get_queue_status(request: web.Request) -> web.Response:
 
     recent_jobs = [
         _public_job(j, client)
-        for j in repository.list_latest(6)
+        for j in repository.list_latest(6, creator_id=current_user_id, include_legacy=current_user.role == "admin")
         if j.status in {"completed", "failed", "cancelled"}
     ]
 
@@ -838,10 +1031,10 @@ async def get_queue_status(request: web.Request) -> web.Response:
 async def get_job(request: web.Request) -> web.Response:
     repository: Repository = request.app["repository"]
     job = repository.get_job(request.match_info["job_id"])
-    if job is None:
+    if job is None or not _may_read(job, request["user"]):
         return _error("작업을 찾을 수 없습니다.", 404)
     job = await _sync_job(request.app, job)
-    return web.json_response(_public_job(job, request.app["comfy"]))
+    return web.json_response(_public_job(job, request.app["comfy"]) if _may_manage(job, request["user"]) else _public_library_job(job, repository))
 
 
 async def library(request: web.Request) -> web.Response:
@@ -858,7 +1051,327 @@ async def library(request: web.Request) -> web.Response:
         return _error(INPUT_ERROR, 400)
     repository: Repository = request.app["repository"]
     jobs = repository.list_library(request.query.get("q", ""), mode, limit)
-    return web.json_response([_public_job(job) for job in jobs])
+    return web.json_response([_public_library_job(job, repository) for job in jobs])
+
+
+async def publish_track(request: web.Request) -> web.Response:
+    repository: Repository = request.app["repository"]
+    job = repository.get_job(request.match_info["job_id"])
+    if job is None or not _may_manage(job, request["user"]):
+        return _error("작업을 찾을 수 없습니다.", 404)
+    job = await _sync_job(request.app, job)
+    if job.status != "completed" or not job.output_filename:
+        return _error("완료된 음악만 공개할 수 있습니다.", 409)
+    try:
+        texts, images = await _cms_form(request, {"title", "album_id", "artist_id"}, {"cover"})
+    except ValueError as error:
+        return _error(str(error), 400)
+    title = texts.get("title", "")
+    album_id = texts.get("album_id") or None
+    try:
+        artist_id = int(texts.get("artist_id") or job.artist_id or request["user"].id)
+    except ValueError:
+        return _error("내 아티스트를 선택해 주세요.", 400)
+    artist = repository.get_artist(artist_id)
+    if artist is None and artist_id == request["user"].id:
+        artist = repository.save_artist(artist_id, request["user"].display_name, "", None, None)
+    if artist is None or artist["user_id"] != request["user"].id:
+        return _error("내 아티스트를 선택해 주세요.", 400)
+    if not title or len(title) > 120:
+        return _error("제목은 1~120자로 입력해 주세요.", 400)
+    if album_id:
+        album = repository.get_album(album_id)
+        if album is None or album["owner_id"] != request["user"].id or album["artist_id"] != artist_id:
+            return _error("내 앨범을 선택해 주세요.", 400)
+    cover_name: str | None = None
+    if images.get("cover"):
+        try:
+            cover_name = _store_cms_image(request.app, images["cover"], 1200)
+        except ValueError as error:
+            return _error(str(error), 400)
+    updated = repository.publish(job.id, request["user"].id, title, cover_name,
+                                 album_id=album_id, artist_id=artist_id,
+                                 allow_legacy=request["user"].role == "admin")
+    if updated is None or updated.published_at is None:
+        if cover_name:
+            (request.app["cover_dir"] / cover_name).unlink(missing_ok=True)
+        return _error("음악을 공개하지 못했습니다.", 409)
+    if cover_name and job.cover_filename and job.cover_filename != cover_name:
+        (request.app["cover_dir"] / job.cover_filename).unlink(missing_ok=True)
+    return web.json_response(_public_library_job(updated, repository))
+
+
+async def unpublish_track(request: web.Request) -> web.Response:
+    repository: Repository = request.app["repository"]
+    job = repository.get_job(request.match_info["job_id"])
+    if job is None or not _may_manage(job, request["user"]):
+        return _error("작업을 찾을 수 없습니다.", 404)
+    if not repository.unpublish(job.id, request["user"].id, allow_legacy=request["user"].role == "admin"):
+        return _error("공개된 음악이 아닙니다.", 409)
+    return web.json_response(_public_job(repository.get_job(job.id)))
+
+
+async def track_cover(request: web.Request) -> web.StreamResponse:
+    job = request.app["repository"].get_job(request.match_info["job_id"])
+    if job is None or not job.published_at or job.status != "completed" or not job.cover_filename:
+        return _error("표지를 찾을 수 없습니다.", 404)
+    path = request.app["cover_dir"] / job.cover_filename
+    if not path.is_file():
+        return _error("표지를 찾을 수 없습니다.", 404)
+    return web.FileResponse(path, headers={"Content-Type": "image/jpeg"})
+
+
+async def track_recipe(request: web.Request) -> web.Response:
+    job = request.app["repository"].get_job(request.match_info["job_id"])
+    if job is None or not job.published_at or job.status != "completed" or not job.output_filename:
+        return _error("공개된 음악을 찾을 수 없습니다.", 404)
+    try:
+        upstream = await request.app["comfy"].open_view(
+            job.output_filename, job.output_subfolder, job.output_type,
+            range_header="bytes=0-4194303",
+        )
+        try:
+            data = await upstream.content.read(4 * 1024 * 1024)
+        finally:
+            upstream.release()
+    except Exception:
+        return _error(OFFLINE_ERROR, 502)
+    graph = prompt_from_mp3(data)
+    recipe = recipe_from_prompt(graph) if graph else None
+    if recipe is None:
+        return _error("이 파일에서 생성 정보를 읽을 수 없습니다.", 422)
+    recipe["title"] = job.published_title or job.title or ""
+    return web.json_response(recipe)
+
+
+def _store_cms_image(app: web.Application, data: bytes, max_side: int = 1600) -> str:
+    if not data or len(data) > 5 * 1024 * 1024:
+        raise ValueError("이미지는 5MB 이하여야 합니다.")
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            if image.format not in {"JPEG", "PNG", "WEBP"} or image.width > 4000 or image.height > 4000:
+                raise ValueError("JPG, PNG, WebP 이미지를 선택해 주세요.")
+            image.load()
+            layer = ImageOps.exif_transpose(image).convert("RGBA")
+            background = Image.new("RGBA", layer.size, "#292332")
+            clean = Image.alpha_composite(background, layer).convert("RGB")
+            clean.thumbnail((max_side, max_side))
+            name = f"{uuid.uuid4().hex}.jpg"
+            clean.save(app["cover_dir"] / name, "JPEG", quality=90)
+            return name
+    except (UnidentifiedImageError, OSError) as error:
+        raise ValueError("이미지를 읽을 수 없습니다.") from error
+
+
+async def _cms_form(request: web.Request, text_fields: set[str], image_fields: set[str]) -> tuple[dict[str, str], dict[str, bytes]]:
+    if not request.content_type.startswith("multipart/"):
+        raise ValueError(INPUT_ERROR)
+    reader = await request.multipart()
+    texts: dict[str, str] = {}
+    images: dict[str, bytes] = {}
+    async for part in reader:
+        if part.name in text_fields:
+            texts[part.name] = (await part.text()).strip()
+        elif part.name in image_fields:
+            chunks: list[bytes] = []
+            total = 0
+            while chunk := await part.read_chunk():
+                total += len(chunk)
+                if total > 5 * 1024 * 1024:
+                    raise ValueError("이미지는 5MB 이하여야 합니다.")
+                chunks.append(chunk)
+            images[part.name] = b"".join(chunks)
+    return texts, images
+
+
+async def library_discover(request: web.Request) -> web.Response:
+    await _sync_all(request.app)
+    repository: Repository = request.app["repository"]
+    latest = repository.list_library(limit=18)
+    albums = repository.list_albums(limit=12)
+    artists = repository.list_artists(limit=12)
+    week_start = datetime.now(timezone.utc) - timedelta(days=7)
+    this_week = [job for job in latest if job.published_at and datetime.fromisoformat(job.published_at) >= week_start]
+    return web.json_response({
+        "new_releases": [_public_library_job(job, repository) for job in latest[:12]],
+        "this_week": [_public_library_job(job, repository) for job in this_week[:12]],
+        "charts": [_public_library_job(job, repository) for job in repository.list_charts(12)],
+        "albums": [_public_album(album, repository) for album in albums],
+        "artists": [_public_artist(artist["artist_id"], repository, (artist["creator_name"] or "아티스트").split(" (@")[0]) for artist in artists],
+    })
+
+
+async def library_charts(request: web.Request) -> web.Response:
+    repository: Repository = request.app["repository"]
+    return web.json_response([_public_library_job(job, repository) for job in repository.list_charts()])
+
+
+async def single_page(request: web.Request) -> web.Response:
+    repository: Repository = request.app["repository"]
+    job = repository.get_job(request.match_info["job_id"])
+    if job is None or not job.published_at or job.status != "completed":
+        return _error("공개된 음악을 찾을 수 없습니다.", 404)
+    return web.json_response(_public_library_job(job, repository))
+
+
+async def artist_page(request: web.Request) -> web.Response:
+    repository: Repository = request.app["repository"]
+    try:
+        artist_id = int(request.match_info["artist_id"])
+    except ValueError:
+        return _error(INPUT_ERROR, 400)
+    tracks = repository.list_artist_tracks(artist_id)
+    profile = repository.get_artist(artist_id)
+    is_mine = bool(profile and profile["user_id"] == request["user"].id)
+    if not tracks and not is_mine:
+        return _error("아티스트를 찾을 수 없습니다.", 404)
+    albums = [album for album in repository.list_albums(owner_id=profile["user_id"] if profile else None)
+              if album["artist_id"] == artist_id]
+    return web.json_response({
+        "artist": _public_artist(artist_id, repository, request["user"].display_name),
+        "albums": [_public_album(album, repository) for album in albums],
+        "tracks": [_public_library_job(job, repository) for job in tracks],
+        "is_mine": is_mine,
+    })
+
+
+async def save_artist(request: web.Request) -> web.Response:
+    repository: Repository = request.app["repository"]
+    raw_id = request.match_info.get("artist_id")
+    creating = request.path == "/api/artists"
+    try:
+        artist_id = None if creating else int(raw_id) if raw_id is not None else request["user"].id
+    except ValueError:
+        return _error(INPUT_ERROR, 400)
+    old = repository.get_artist(artist_id) if artist_id is not None else None
+    if artist_id is not None and artist_id != request["user"].id and (
+            old is None or old["user_id"] != request["user"].id):
+        return _error("아티스트를 찾을 수 없습니다.", 404)
+    try:
+        texts, images = await _cms_form(request, {"name", "bio"}, {"avatar", "banner"})
+        name = texts.get("name", "").strip()
+        bio = texts.get("bio", "")
+        if not 1 <= len(name) <= 60 or len(bio) > 1000:
+            raise ValueError("아티스트 이름은 1~60자, 소개는 1,000자 이내로 입력해 주세요.")
+        avatar = _store_cms_image(request.app, images["avatar"], 800) if images.get("avatar") else None
+        banner = _store_cms_image(request.app, images["banner"], 1800) if images.get("banner") else None
+    except ValueError as error:
+        return _error(str(error), 400)
+    if creating:
+        saved = repository.create_artist(request["user"].id, name, bio, avatar, banner)
+    else:
+        saved = repository.save_artist(request["user"].id, name, bio, avatar, banner, artist_id=artist_id)
+    for field, replacement in (("avatar_filename", avatar), ("banner_filename", banner)):
+        if old and old[field] and replacement:
+            (request.app["cover_dir"] / old[field]).unlink(missing_ok=True)
+    return web.json_response(_public_artist(saved["id"], repository, request["user"].display_name),
+                             status=201 if creating else 200)
+
+
+async def my_artists(request: web.Request) -> web.Response:
+    repository: Repository = request.app["repository"]
+    user = request["user"]
+    if repository.get_artist(user.id) is None:
+        previous = repository.list_artist_tracks(user.id, 1)
+        name = (previous[0].creator_name or user.display_name).split(" (@")[0] if previous else user.display_name
+        repository.save_artist(user.id, name, "", None, None)
+    return web.json_response([_public_artist(profile["id"], repository)
+                              for profile in repository.list_owned_artists(user.id)])
+
+
+async def artist_image(request: web.Request) -> web.StreamResponse:
+    repository: Repository = request.app["repository"]
+    try:
+        artist_id = int(request.match_info["artist_id"])
+    except ValueError:
+        return _error(INPUT_ERROR, 400)
+    profile = repository.get_artist(artist_id)
+    tracks = repository.list_artist_tracks(artist_id, 1)
+    field = "avatar_filename" if request.match_info["kind"] == "avatar" else "banner_filename"
+    if not profile or not profile[field] or (not tracks and profile["user_id"] != request["user"].id):
+        return _error("이미지를 찾을 수 없습니다.", 404)
+    path = request.app["cover_dir"] / profile[field]
+    if not path.is_file():
+        return _error("이미지를 찾을 수 없습니다.", 404)
+    return web.FileResponse(path, headers={"Content-Type": "image/jpeg"})
+
+
+async def list_albums(request: web.Request) -> web.Response:
+    repository: Repository = request.app["repository"]
+    mine = request.query.get("mine") == "1"
+    albums = repository.list_albums(owner_id=request["user"].id if mine else None, public_only=not mine)
+    return web.json_response([_public_album(album, repository) for album in albums])
+
+
+async def create_album(request: web.Request) -> web.Response:
+    try:
+        texts, images = await _cms_form(request, {"title", "description", "artist_id"}, {"cover"})
+        title, description = texts.get("title", ""), texts.get("description", "")
+        artist_id = int(texts.get("artist_id") or request["user"].id)
+        if not 1 <= len(title) <= 120 or len(description) > 1000:
+            raise ValueError("앨범 제목은 1~120자, 설명은 1,000자 이내로 입력해 주세요.")
+        cover = _store_cms_image(request.app, images["cover"]) if images.get("cover") else None
+    except ValueError as error:
+        return _error(str(error), 400)
+    repository: Repository = request.app["repository"]
+    artist = repository.get_artist(artist_id)
+    if artist is None and artist_id == request["user"].id:
+        artist = repository.save_artist(artist_id, request["user"].display_name, "", None, None)
+    if artist is None or artist["user_id"] != request["user"].id:
+        if cover:
+            (request.app["cover_dir"] / cover).unlink(missing_ok=True)
+        return _error("내 아티스트를 선택해 주세요.", 400)
+    album = repository.create_album(str(uuid.uuid4()), request["user"].id, title, description, cover,
+                                    artist_id=artist_id)
+    return web.json_response(_public_album(album, repository), status=201)
+
+
+async def update_album(request: web.Request) -> web.Response:
+    repository: Repository = request.app["repository"]
+    old = repository.get_album(request.match_info["album_id"])
+    if old is None or old["owner_id"] != request["user"].id:
+        return _error("앨범을 찾을 수 없습니다.", 404)
+    try:
+        texts, images = await _cms_form(request, {"title", "description"}, {"cover"})
+        title, description = texts.get("title", ""), texts.get("description", "")
+        if not 1 <= len(title) <= 120 or len(description) > 1000:
+            raise ValueError("앨범 제목은 1~120자, 설명은 1,000자 이내로 입력해 주세요.")
+        cover = _store_cms_image(request.app, images["cover"]) if images.get("cover") else None
+    except ValueError as error:
+        return _error(str(error), 400)
+    album = repository.update_album(old["id"], request["user"].id, title, description, cover)
+    if cover and old["cover_filename"]:
+        (request.app["cover_dir"] / old["cover_filename"]).unlink(missing_ok=True)
+    return web.json_response(_public_album(album, repository))
+
+
+async def album_page(request: web.Request) -> web.Response:
+    repository: Repository = request.app["repository"]
+    album = repository.get_album(request.match_info["album_id"])
+    if album is None or (album["track_count"] == 0 and album["owner_id"] != request["user"].id):
+        return _error("앨범을 찾을 수 없습니다.", 404)
+    return web.json_response({
+        "album": _public_album(album, repository),
+        "tracks": [_public_library_job(job, repository) for job in repository.list_album_tracks(album["id"])],
+        "is_mine": album["owner_id"] == request["user"].id,
+    })
+
+
+async def album_cover(request: web.Request) -> web.StreamResponse:
+    album = request.app["repository"].get_album(request.match_info["album_id"])
+    if album is None or not album["cover_filename"] or (album["track_count"] == 0 and album["owner_id"] != request["user"].id):
+        return _error("표지를 찾을 수 없습니다.", 404)
+    path = request.app["cover_dir"] / album["cover_filename"]
+    if not path.is_file():
+        return _error("표지를 찾을 수 없습니다.", 404)
+    return web.FileResponse(path, headers={"Content-Type": "image/jpeg"})
+
+
+async def record_play(request: web.Request) -> web.Response:
+    plays = request.app["repository"].increment_play(request.match_info["job_id"])
+    if plays is None:
+        return _error("공개된 음악을 찾을 수 없습니다.", 404)
+    return web.json_response({"play_count": plays})
 
 
 def _sanitize_download_name(title: str | None) -> str:
@@ -870,7 +1383,7 @@ def _sanitize_download_name(title: str | None) -> str:
 async def _track_response(request: web.Request, download: bool) -> web.StreamResponse:
     repository: Repository = request.app["repository"]
     job = repository.get_job(request.match_info["job_id"])
-    if job is None:
+    if job is None or not _may_read(job, request["user"]):
         return _error("트랙을 찾을 수 없습니다.", 404)
     job = await _sync_job(request.app, job)
     if job.status != "completed" or not job.output_filename:
@@ -903,7 +1416,7 @@ async def _track_response(request: web.Request, download: bool) -> web.StreamRes
         if upstream.headers.get(name):
             headers[name] = upstream.headers[name]
     if download:
-        download_name = _sanitize_download_name(job.title)
+        download_name = _sanitize_download_name(job.published_title if job.published_at else job.title)
         ascii_stem = download_name[:-4].encode("ascii", "ignore").decode("ascii").strip(" ._")
         ascii_name = f"{ascii_stem or 'track'}.mp3"
         headers["Content-Disposition"] = (
@@ -975,7 +1488,14 @@ def create_app(
     app["public_origin"] = os.environ.get("YUE2_PUBLIC_ORIGIN", "").rstrip("/")
     app["comfy"] = comfy_client or ComfyClient(comfy_url)
     app["client_id"] = str(uuid.uuid4())
+    app["event_sockets"] = {}
+    app["pending_progress"] = {}
+    app["last_progress"] = {}
+    app["prompt_jobs"] = {}
+    app["finish_tasks"] = {}
     app["static_dir"] = Path(static_dir) if static_dir is not None else Path(__file__).parent / "static"
+    app["cover_dir"] = app["repository"].path.parent / "covers"
+    app["cover_dir"].mkdir(parents=True, exist_ok=True)
 
     app.router.add_get("/api/health", health)
     app.router.add_post("/api/auth/register", register)
@@ -990,9 +1510,29 @@ def create_app(
     app.router.add_post("/api/admin/invites", create_invite)
     app.router.add_post("/api/generations", create_generation)
     app.router.add_get("/api/jobs", list_jobs)
+    app.router.add_get("/api/events", job_events)
     app.router.add_get("/api/jobs/{job_id}", get_job)
     app.router.add_get("/api/queue", get_queue_status)
     app.router.add_get("/api/library", library)
+    app.router.add_get("/api/library/discover", library_discover)
+    app.router.add_get("/api/library/charts", library_charts)
+    app.router.add_get("/api/library/tracks/{job_id}", single_page)
+    app.router.add_get("/api/artists/mine", my_artists)
+    app.router.add_post("/api/artists", save_artist)
+    app.router.add_post("/api/artists/me", save_artist)
+    app.router.add_post("/api/artists/{artist_id}", save_artist)
+    app.router.add_get("/api/artists/{artist_id}", artist_page)
+    app.router.add_get("/api/artists/{artist_id}/{kind:avatar|banner}", artist_image)
+    app.router.add_get("/api/albums", list_albums)
+    app.router.add_post("/api/albums", create_album)
+    app.router.add_get("/api/albums/{album_id}", album_page)
+    app.router.add_post("/api/albums/{album_id}", update_album)
+    app.router.add_get("/api/albums/{album_id}/cover", album_cover)
+    app.router.add_post("/api/tracks/{job_id}/publish", publish_track)
+    app.router.add_delete("/api/tracks/{job_id}/publish", unpublish_track)
+    app.router.add_get("/api/tracks/{job_id}/cover", track_cover)
+    app.router.add_get("/api/tracks/{job_id}/recipe", track_recipe)
+    app.router.add_post("/api/tracks/{job_id}/play", record_play)
     app.router.add_get("/api/tracks/{job_id}/audio", track_audio)
     app.router.add_get("/api/tracks/{job_id}/download", track_download)
     app.router.add_static("/static/", path=app["static_dir"], name="static")
@@ -1000,22 +1540,40 @@ def create_app(
 
     async def startup(application: web.Application) -> None:
         client = application["comfy"]
+        application["prompt_jobs"].update(
+            {job.prompt_id: job.id for job in application["repository"].list_nonterminal() if job.prompt_id}
+        )
+        if isinstance(client, ComfyClient):
+            client.event_listener = lambda event: _on_comfy_event(application, event)
         start = getattr(client, "start", None)
         if start is not None:
             await start()
         watch_progress = getattr(client, "watch_progress", None)
         if watch_progress is not None:
             application["progress_task"] = asyncio.create_task(watch_progress(application["client_id"]))
+        application["progress_flush_task"] = asyncio.create_task(_flush_progress(application))
+        application["reconcile_task"] = asyncio.create_task(_reconcile_jobs(application))
 
     async def cleanup(application: web.Application) -> None:
-        progress_task = application.get("progress_task")
-        if progress_task is not None:
+        for task_name in ("progress_task", "progress_flush_task", "reconcile_task"):
+            progress_task = application.get(task_name)
+            if progress_task is None:
+                continue
             progress_task.cancel()
             try:
                 await progress_task
             except asyncio.CancelledError:
                 pass
+        finish_tasks = tuple(application["finish_tasks"].values())
+        for task in finish_tasks:
+            task.cancel()
+        if finish_tasks:
+            await asyncio.gather(*finish_tasks, return_exceptions=True)
+        for socket in tuple(application["event_sockets"]):
+            await socket.close()
         client = application["comfy"]
+        if isinstance(client, ComfyClient):
+            client.event_listener = None
         close = getattr(client, "close", None)
         if close is not None:
             await close()

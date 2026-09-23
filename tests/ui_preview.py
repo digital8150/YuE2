@@ -29,6 +29,7 @@ TRACKS = [
      "mode": "cover" if i % 3 == 1 else "original", "status": "completed",
      "created_at": "2026-09-23T01:00:00+00:00", "lyrics": "",
      "creator": "미리보기 회원",
+     "published": True, "artist_id": 1, "play_count": (8 - i) * 24,
      "audio_url": "/preview.wav", "download_url": "/preview.wav"}
     for i, (title, style) in enumerate(TITLES)
 ]
@@ -69,8 +70,37 @@ async def library(request):
     query = request.query.get("q", "").casefold()
     mode = request.query.get("mode")
     return web.json_response([track for track in TRACKS
-                              if query in (track["title"] + track["style"]).casefold()
+                              if track.get("published") and query in (track["title"] + track["style"]).casefold()
                               and (not mode or track["mode"] == mode)])
+
+
+async def discover(request):
+    public = [track for track in TRACKS if track.get("published")]
+    return web.json_response({"new_releases": public, "this_week": public, "charts": public,
+                              "albums": [{"id": "preview-album", "title": "푸른 새벽", "description": "첫 번째 앨범",
+                                          "artist_id": 1, "artist_name": "미리보기 회원", "track_count": 3, "cover_url": None}],
+                              "artists": [{"id": 1, "name": "미리보기 회원", "bio": "음악을 만들어요",
+                                           "track_count": len(TRACKS), "avatar_url": None, "banner_url": None}]})
+
+
+async def charts(request):
+    return web.json_response([track for track in TRACKS if track.get("published")])
+
+
+async def artist(request):
+    return web.json_response({"artist": {"id": 1, "name": "미리보기 회원", "bio": "음악을 만들어요",
+                                         "track_count": len(TRACKS), "avatar_url": None, "banner_url": None},
+                              "albums": [], "tracks": TRACKS, "is_mine": True})
+
+
+async def album(request):
+    return web.json_response({"album": {"id": "preview-album", "title": "푸른 새벽", "description": "첫 번째 앨범",
+                                         "artist_id": 1, "artist_name": "미리보기 회원", "track_count": 3, "cover_url": None},
+                              "tracks": TRACKS[:3], "is_mine": True})
+
+
+async def single(request):
+    return web.json_response(next((track for track in TRACKS if track["id"] == request.match_info["job_id"]), TRACKS[0]))
 
 
 async def generate(request):
@@ -107,6 +137,12 @@ def main():
     app.router.add_get("/api/auth/me", preview_user)
     app.router.add_get("/api/jobs", jobs)
     app.router.add_get("/api/library", library)
+    app.router.add_get("/api/library/discover", discover)
+    app.router.add_get("/api/library/charts", charts)
+    app.router.add_get("/api/library/tracks/{job_id}", single)
+    app.router.add_get("/api/artists/{artist_id}", artist)
+    app.router.add_get("/api/albums/{album_id}", album)
+    app.router.add_get("/api/albums", lambda request: web.json_response([]))
     app.router.add_post("/api/generations", generate)
     app.router.add_get("/preview.wav", sound)
     web.run_app(app, host="127.0.0.1", port=7861)

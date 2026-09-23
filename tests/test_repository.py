@@ -36,7 +36,7 @@ class RepositoryTests(unittest.TestCase):
         created_at: str = "2026-01-01T00:00:00+00:00",
         updated_at: str | None = None,
     ):
-        return self.repo.create_job(
+        job = self.repo.create_job(
             job_id=job_id,
             prompt_id=f"prompt-{job_id}",
             mode=mode,
@@ -49,6 +49,11 @@ class RepositoryTests(unittest.TestCase):
             created_at=created_at,
             updated_at=updated_at or created_at,
         )
+        if status == "completed":
+            with sqlite3.connect(self.repo.path) as db:
+                db.execute("UPDATE jobs SET output_filename = ?, published_at = ? WHERE id = ?",
+                           (f"{job_id}.mp3", updated_at or created_at, job_id))
+        return self.repo.get_job(job_id)
 
     def test_create_get_and_update_round_trip_with_defaults(self) -> None:
         job = self.repo.create_job(
@@ -135,6 +140,42 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual([item.id for item in original_matches], ["new-original", "old-original"])
         cover_matches = self.repo.list_library(mode="cover")
         self.assertEqual([item.id for item in cover_matches], ["cover"])
+
+    def test_publication_is_explicit_and_preserves_studio_title(self) -> None:
+        job = self.repo.create_job(job_id="private", prompt_id=None, mode="original", title="Draft",
+                                   style="piano", lyrics="", seed=2, settings={}, creator_id=4)
+        self.repo.set_output(job.id, filename="track.mp3")
+        self.assertEqual(self.repo.list_library(), [])
+        self.repo.publish(job.id, 4, "Public title", "cover.jpg")
+        published = self.repo.get_job(job.id)
+        self.assertEqual(published.title, "Draft")
+        self.assertEqual(published.published_title, "Public title")
+        self.assertEqual([item.id for item in self.repo.list_library(query="public")], [job.id])
+        self.assertFalse(self.repo.unpublish(job.id, 5))
+        self.assertTrue(self.repo.unpublish(job.id, 4))
+        self.assertEqual(self.repo.list_library(), [])
+
+    def test_legacy_artist_identity_and_publication_migrate(self) -> None:
+        job = self.repo.create_job(job_id="legacy-artist", prompt_id=None, mode="original", title="Old song",
+                                   style="piano", lyrics="", seed=2, settings={}, creator_id=4,
+                                   status="completed")
+        self.repo.set_output(job.id, filename="old.mp3")
+        self.repo.publish(job.id, 4, "Old public song")
+        album = self.repo.create_album("legacy-album", 4, "Old album", "", None)
+        with sqlite3.connect(self.repo.path) as db:
+            db.execute("DROP TABLE artist_profiles")
+            db.execute("""CREATE TABLE artist_profiles (
+                user_id INTEGER PRIMARY KEY, artist_name TEXT NOT NULL, bio TEXT NOT NULL DEFAULT '',
+                avatar_filename TEXT, banner_filename TEXT, updated_at TEXT NOT NULL)""")
+            db.execute("INSERT INTO artist_profiles VALUES (4, 'Old Artist', 'Original bio', NULL, NULL, '2025-01-01')")
+            db.execute("UPDATE jobs SET artist_id = NULL WHERE id = ?", (job.id,))
+            db.execute("UPDATE albums SET artist_id = NULL WHERE id = ?", (album["id"],))
+        migrated = Repository(self.repo.path)
+        self.assertEqual(migrated.get_artist(4)["artist_name"], "Old Artist")
+        self.assertEqual(migrated.get_artist(4)["user_id"], 4)
+        self.assertEqual(migrated.get_job(job.id).artist_id, 4)
+        self.assertEqual(migrated.get_album(album["id"])["artist_id"], 4)
+        self.assertEqual(migrated.list_artist_tracks(4)[0].id, job.id)
 
     def test_latest_list_has_descending_created_order_and_limit_default(self) -> None:
         for index in range(10):

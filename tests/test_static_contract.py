@@ -49,6 +49,15 @@ def _read(paths: list[Path]) -> str:
 
 
 class StaticFrontendContractTests(unittest.TestCase):
+    def test_artist_management_lives_on_backoffice_page(self) -> None:
+        studio = (STATIC / "index.html").read_text(encoding="utf-8")
+        library = studio.split('id="library-view"', 1)[1].split('id="queue-view"', 1)[0]
+        self.assertNotIn("프로필 편집", library)
+        self.assertNotIn("앨범 관리", library)
+        self.assertIn('href="#backoffice"', studio)
+        self.assertIn('id="new-artist"', studio)
+        self.assertIn('id="album-editor"', studio)
+
     def test_internal_engine_names_do_not_leak_into_static_frontend(self) -> None:
         files = _static_files((".html", ".js", ".mjs", ".css"))
         self.assertTrue(files, "expected HTML/JS/CSS files under yue2_app/static")

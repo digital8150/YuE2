@@ -38,7 +38,7 @@
 
   const BASE_PATH = (() => {
     const path = window.location.pathname;
-    return path.endsWith("/") ? path.slice(0, -1) : path;
+    return path.endsWith("/") ? path.slice(0, -1) : path.replace(/\/[^/]*$/, "");
   })();
 
   function resolvePath(path) {
@@ -77,7 +77,10 @@
         location.reload();
       });
       profile.append(name, logout);
-      if (result.user.role === "admin") addAdminControls(profile);
+      if (result.user.role === "admin") {
+        const adminControls = document.querySelector("#backoffice-admin-controls");
+        if (adminControls) addAdminControls(adminControls);
+      }
     }
     window.dispatchEvent(new Event("yue2-ready"));
   }
@@ -87,40 +90,54 @@
     button.className = "auth-admin-button";
     button.type = "button";
     button.textContent = "초대 코드 관리";
-    const panel = document.createElement("section");
+    button.setAttribute("aria-haspopup", "dialog");
+    button.setAttribute("aria-expanded", "false");
+    const panel = document.createElement("dialog");
     panel.className = "auth-admin-panel";
-    panel.hidden = true;
-    profile.after(panel);
+    panel.setAttribute("aria-labelledby", "auth-admin-title");
+    const header = document.createElement("div");
+    header.className = "auth-admin-header";
+    const heading = document.createElement("h2");
+    heading.id = "auth-admin-title";
+    heading.textContent = "초대 코드 관리";
+    const closeButton = document.createElement("button");
+    closeButton.className = "auth-admin-close";
+    closeButton.type = "button";
+    closeButton.textContent = "닫기";
+    closeButton.addEventListener("click", () => panel.close());
+    header.append(heading, closeButton);
+    const content = document.createElement("div");
+    content.className = "auth-admin-content";
+    panel.append(header, content);
+    document.body.append(panel);
     profile.append(button);
+    panel.addEventListener("close", () => {
+      button.setAttribute("aria-expanded", "false");
+      button.focus();
+    });
+    panel.addEventListener("click", (event) => {
+      if (event.target === panel) panel.close();
+    });
 
     async function loadInvites() {
       const data = await api("/api/admin/invites");
       const invites = data.invites || [];
-      panel.replaceChildren();
-
-      const header = document.createElement("div");
-      header.style.display = "flex";
-      header.style.justifyContent = "space-between";
-      header.style.alignItems = "center";
-      header.style.marginBottom = "10px";
-
-      const heading = document.createElement("h2");
-      heading.style.margin = "0";
+      content.replaceChildren();
       heading.textContent = `초대 코드 (${invites.length}개)`;
-      header.append(heading);
 
       const createForm = document.createElement("div");
       createForm.className = "auth-new-invite";
       const noteInput = document.createElement("input");
       noteInput.placeholder = "메모 (선택)";
+      noteInput.setAttribute("aria-label", "초대 코드 메모 (선택)");
       noteInput.maxLength = 30;
       const usesInput = document.createElement("input");
       usesInput.type = "number";
       usesInput.value = "1";
       usesInput.min = "1";
       usesInput.max = "100";
-      usesInput.style.width = "48px";
       usesInput.title = "사용 가능 횟수";
+      usesInput.setAttribute("aria-label", "사용 가능 횟수");
       const createBtn = document.createElement("button");
       createBtn.type = "button";
       createBtn.textContent = "+ 발급";
@@ -145,13 +162,10 @@
 
       const list = document.createElement("div");
       list.className = "auth-invite-list";
-      list.style.maxHeight = "200px";
-      list.style.overflowY = "auto";
 
       if (invites.length === 0) {
         const empty = document.createElement("p");
-        empty.style.color = "#888";
-        empty.style.fontSize = "12px";
+        empty.className = "auth-invite-empty";
         empty.textContent = "발급된 초대 코드가 없습니다.";
         list.append(empty);
       } else {
@@ -160,9 +174,7 @@
           row.className = "auth-invite-row";
 
           const info = document.createElement("div");
-          info.style.overflow = "hidden";
-          info.style.textOverflow = "ellipsis";
-          info.style.whiteSpace = "nowrap";
+          info.className = "auth-invite-info";
 
           const codeSpan = document.createElement("span");
           codeSpan.className = "auth-invite-code";
@@ -198,13 +210,22 @@
         });
       }
 
-      panel.append(header, createForm, list);
+      content.append(createForm, list);
     }
 
     button.addEventListener("click", async () => {
-      panel.hidden = !panel.hidden;
-      if (!panel.hidden) {
-        try { await loadInvites(); } catch (error) { alert(error.message); }
+      if (panel.open) {
+        panel.close();
+        return;
+      }
+      panel.showModal();
+      button.setAttribute("aria-expanded", "true");
+      try {
+        await loadInvites();
+        content.querySelector(".auth-new-invite input")?.focus();
+      } catch (error) {
+        alert(error.message);
+        panel.close();
       }
     });
   }
@@ -228,16 +249,29 @@
     submit.disabled = true;
     const data = new FormData(form);
     try {
-      const result = await api(settingUp ? "/api/auth/setup" : registering ? "/api/auth/register" : "/api/auth/login", {
+      const signedIn = await api(settingUp ? "/api/auth/setup" : registering ? "/api/auth/register" : "/api/auth/login", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(Object.fromEntries(data))
       });
+      const result = await api("/api/auth/me");
+      if (!result.user || result.user.id !== signedIn.user?.id) {
+        throw new Error("로그인 상태를 유지할 수 없습니다. 브라우저 쿠키와 접속 주소를 확인하세요.");
+      }
       activate(result);
     } catch (error) { showError(error.message); }
     finally { submit.disabled = false; }
   });
 
-  api("/api/auth/me").then(activate).catch(async () => {
+  api("/api/auth/me").then((result) => {
+    if (result.user) {
+      activate(result);
+      return;
+    }
+    return showLoginGate();
+  }).catch(showLoginGate);
+
+  async function showLoginGate() {
+    if (auth.ready) return;
     gate.hidden = false;
     try {
       const status = await api("/api/auth/setup-status");
@@ -254,5 +288,5 @@
         form.elements.password.minLength = 12;
       }
     } catch { showError("서버에 연결할 수 없습니다."); }
-  });
+  }
 })();

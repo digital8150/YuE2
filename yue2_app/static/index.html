@@ -6,15 +6,19 @@
     <meta name="theme-color" content="#101012" />
     <meta name="description" content="YUE STUDIO 음악 생성 대시보드" />
     <title>YUE STUDIO</title>
+    <link rel="icon" type="image/svg+xml" href="static/favicon.svg" />
     <link rel="stylesheet" href="static/styles.css" />
     <script src="static/auth.js" defer></script>
+    <script src="static/prompt_assistant.js" defer></script>
     <script src="static/app.js" defer></script>
+    <script src="static/backoffice.js" defer></script>
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
       <symbol id="icon-wave" viewBox="0 0 24 24"><path d="M3 12h2l2-7 3 14 3-12 2 10 2-5h4"/></symbol>
       <symbol id="icon-create" viewBox="0 0 24 24"><path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/><path d="M19 7h3M20.5 5.5v3"/></symbol>
       <symbol id="icon-library" viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 5v14M12 5v14"/></symbol>
+      <symbol id="icon-person" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
       <symbol id="icon-title" viewBox="0 0 24 24"><path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/></symbol>
       <symbol id="icon-upload" viewBox="0 0 24 24"><path d="M12 16V4M8 8l4-4 4 4M5 20h14"/></symbol>
       <symbol id="icon-style" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M10 14v6"/></symbol>
@@ -68,6 +72,7 @@
             <span>서버 대기열</span>
             <span class="nav-queue-badge" id="nav-queue-badge" hidden>0</span>
           </a>
+          <a class="nav-link" href="#backoffice" data-view-link="backoffice" aria-label="아티스트 백오피스"><svg class="nav-icon" aria-hidden="true"><use href="#icon-person"></use></svg><span>백오피스</span></a>
         </nav>
 
         <div class="sidebar-footer">
@@ -120,6 +125,35 @@
                 </div>
 
                 <div class="form-stack">
+                  <section class="prompt-assistant" aria-labelledby="prompt-assistant-title">
+                    <div class="prompt-assistant-heading">
+                      <div>
+                        <h2 id="prompt-assistant-title">아이디어로 프롬프트 만들기</h2>
+                        <p>Chrome 기기 내 AI가 곡 제목과 YuE2 형식의 스타일·가사 초안을 만듭니다.</p>
+                      </div>
+                      <span class="prompt-assistant-badge">기기 내 AI</span>
+                    </div>
+                    <label class="sr-only" for="prompt-idea">곡 아이디어</label>
+                    <textarea class="text-area prompt-idea" id="prompt-idea" rows="3" maxlength="1500" placeholder="예: 비 오는 서울 밤거리의 그리움을 담은 느린 인디 팝. 여성 보컬, 피아노와 잔잔한 드럼"></textarea>
+                    <div class="prompt-assistant-actions">
+                      <label for="prompt-language">가사 언어</label>
+                      <select id="prompt-language" aria-label="생성할 가사 언어">
+                        <option value="ko">한국어</option>
+                        <option value="en">영어</option>
+                      </select>
+                      <button id="prompt-generate" type="button" disabled>초안 만들기</button>
+                    </div>
+                    <p class="prompt-assistant-status" id="prompt-status" role="status" aria-live="polite">Chrome AI 지원 여부를 확인하고 있습니다.</p>
+                    <div class="prompt-assistant-result" id="prompt-result" hidden>
+                      <strong>생성된 초안</strong>
+                      <div class="prompt-assistant-preview" tabindex="0" aria-label="생성된 곡 제목, 스타일과 가사">
+                        <p class="prompt-assistant-title"><strong>곡 제목</strong> <span id="prompt-result-title"></span></p>
+                        <p id="prompt-result-style"></p>
+                        <pre id="prompt-result-lyrics"></pre>
+                      </div>
+                      <button id="prompt-apply" type="button">편집기에 적용</button>
+                    </div>
+                  </section>
                   <div class="field-group cover-field" id="cover-field" hidden>
                     <div class="field-label-row">
                       <label class="field-label" for="audio-file"><svg class="label-icon" aria-hidden="true"><use href="#icon-upload"></use></svg><span>참고 오디오</span><span class="required">필수</span></label>
@@ -163,6 +197,12 @@
                       <button class="suggestion-chip" type="button" data-suggestion="Cinematic orchestral music, sweeping strings and a gradually building climax">시네마틱</button>
                     </div>
                     <p class="field-error" id="style-error" role="alert" hidden></p>
+                  </div>
+
+                  <div class="title-block editor-block">
+                    <label class="field-label" for="track-title"><svg class="label-icon" aria-hidden="true"><use href="#icon-title"></use></svg><span>곡 제목</span><span class="optional">선택</span></label>
+                    <input class="text-input" id="track-title" name="title" type="text" maxlength="120" autocomplete="off" placeholder="이 음악의 이름은…" />
+                    <div class="save-destination"><svg class="icon" aria-hidden="true"><use href="#icon-library"></use></svg><span>저장 위치</span><span class="destination-pill">내 스튜디오 · 공개는 나중에</span></div>
                   </div>
 
                 </div>
@@ -274,11 +314,6 @@
                   </div>
                 </details>
 
-                <div class="title-block editor-block">
-                  <label class="field-label" for="track-title"><svg class="label-icon" aria-hidden="true"><use href="#icon-title"></use></svg><span>곡 제목</span><span class="optional">선택</span></label>
-                  <input class="text-input" id="track-title" name="title" type="text" maxlength="120" autocomplete="off" placeholder="이 음악의 이름은…" />
-                  <div class="save-destination"><svg class="icon" aria-hidden="true"><use href="#icon-library"></use></svg><span>저장 위치</span><span class="destination-pill">내 라이브러리</span></div>
-                </div>
                 <p class="form-error" id="form-error" role="alert" hidden></p>
                 </div>
                 <div class="submit-row">
@@ -329,11 +364,13 @@
 
           <section class="view-panel" id="library-view" data-view-panel="library" aria-labelledby="library-title" hidden>
             <div class="page-heading page-heading-library">
-              <div><p class="eyebrow">YOUR COLLECTION</p><h1 id="library-title">라이브러리</h1><p class="page-description">당신의 아이디어가 음악이 되는 곳.</p></div>
-              <a class="new-track-link" href="#create"><svg class="icon" aria-hidden="true"><use href="#icon-create"></use></svg>새 곡 만들기</a>
+              <div><p class="eyebrow">SHARED MUSIC</p><h1 id="library-title">라이브러리</h1><p class="page-description">창작자가 공개한 음악을 듣고, 생성 설정을 내 스튜디오로 가져오세요.</p></div>
             </div>
 
-            <div class="library-toolbar">
+            <nav class="library-tabs" aria-label="라이브러리 탐색"><a href="#library" data-library-tab="discover">둘러보기</a><a href="#library?view=charts" data-library-tab="charts">차트</a><a href="#library?view=all" data-library-tab="all">모든 음악</a></nav>
+            <div id="library-content" class="library-content" aria-live="polite"></div>
+
+            <div class="library-toolbar" id="library-toolbar" hidden>
               <label class="search-box" for="library-search">
                 <svg class="search-icon" aria-hidden="true"><use href="#icon-search"></use></svg>
                 <span class="sr-only">음악 검색</span>
@@ -347,8 +384,8 @@
               </div>
             </div>
 
-            <div class="library-status" id="library-status" aria-live="polite"></div>
-            <div class="library-grid" id="library-grid" aria-live="polite">
+            <div class="library-status" id="library-status" aria-live="polite" hidden></div>
+            <div class="library-grid" id="library-grid" aria-live="polite" hidden>
               <div class="track-skeleton" aria-hidden="true"></div>
               <div class="track-skeleton" aria-hidden="true"></div>
               <div class="track-skeleton" aria-hidden="true"></div>
@@ -407,6 +444,41 @@
               </aside>
             </div>
           </section>
+          <section class="view-panel" id="backoffice-view" data-view-panel="backoffice" aria-labelledby="backoffice-title" hidden>
+            <div class="page-heading">
+              <div><p class="eyebrow">ARTIST BACK OFFICE</p><h1 id="backoffice-title">아티스트 백오피스</h1><p class="page-description">가상명의 아티스트와 앨범을 관리합니다.</p></div>
+              <div id="backoffice-admin-controls" class="backoffice-admin-controls"></div>
+            </div>
+            <p id="backoffice-status" class="backoffice-status" role="status" hidden></p>
+            <div class="backoffice-layout">
+              <section class="backoffice-panel" aria-labelledby="artists-heading">
+                <div class="backoffice-panel-head"><h2 id="artists-heading">내 아티스트</h2><button class="new-track-link" id="new-artist" type="button">+ 새 아티스트</button></div>
+                <div id="artist-list" class="backoffice-artist-list"></div>
+              </section>
+              <div class="backoffice-editors">
+                <section class="backoffice-panel" aria-labelledby="artist-editor-heading">
+                  <div class="backoffice-panel-head"><h2 id="artist-editor-heading">아티스트 프로필</h2><a id="artist-public-link" class="backoffice-public-link" href="#library" hidden>공개 페이지 보기 ↗</a></div>
+                  <form id="artist-editor" class="backoffice-form">
+                    <label class="field-label" for="backoffice-artist-name">아티스트 이름</label><input class="text-input" id="backoffice-artist-name" name="name" maxlength="60" required />
+                    <label class="field-label" for="backoffice-artist-bio">소개</label><textarea class="text-input text-area" id="backoffice-artist-bio" name="bio" maxlength="1000" rows="4" placeholder="이 아티스트의 음악과 이야기를 소개해 주세요"></textarea>
+                    <div class="backoffice-fields"><label class="field-label">프로필 이미지<input name="avatar" type="file" accept="image/png,image/jpeg,image/webp" /></label><label class="field-label">배너 이미지<input name="banner" type="file" accept="image/png,image/jpeg,image/webp" /></label></div>
+                    <p class="backoffice-hint">이미지는 각각 최대 5MB입니다. 선택하지 않으면 기존 이미지를 유지합니다.</p>
+                    <div class="backoffice-form-actions"><button class="new-track-link" type="submit">프로필 저장</button></div>
+                  </form>
+                </section>
+                <section class="backoffice-panel" aria-labelledby="album-editor-heading">
+                  <div class="backoffice-panel-head"><h2 id="album-editor-heading">앨범 관리</h2></div>
+                  <label class="field-label" for="album-picker">편집할 앨범</label><select class="text-input" id="album-picker"><option value="">+ 새 앨범</option></select>
+                  <form id="album-editor" class="backoffice-form">
+                    <label class="field-label" for="backoffice-album-title">앨범 제목</label><input class="text-input" id="backoffice-album-title" name="title" maxlength="120" required />
+                    <label class="field-label" for="backoffice-album-description">설명</label><textarea class="text-input text-area" id="backoffice-album-description" name="description" maxlength="1000" rows="3"></textarea>
+                    <label class="field-label">표지 이미지<input name="cover" type="file" accept="image/png,image/jpeg,image/webp" /></label>
+                    <div class="backoffice-form-actions"><button class="new-track-link" type="submit">앨범 저장</button></div>
+                  </form>
+                </section>
+              </div>
+            </div>
+          </section>
         </div>
       </main>
 
@@ -423,8 +495,27 @@
           <svg class="mobile-nav-icon" aria-hidden="true"><use href="#icon-queue"></use></svg>
           <span>대기열</span>
         </a>
+        <a class="mobile-nav-link" href="#backoffice" data-view-link="backoffice"><svg class="mobile-nav-icon" aria-hidden="true"><use href="#icon-person"></use></svg><span>백오피스</span></a>
       </nav>
     </div>
+
+    <dialog class="publish-dialog" id="publish-dialog" aria-labelledby="publish-title">
+      <form id="publish-form" class="publish-form">
+        <div class="publish-head"><div><p class="eyebrow">SHARE MUSIC</p><h2 id="publish-title">라이브러리에 공개</h2></div><button class="publish-close" id="publish-close" type="button" aria-label="닫기">×</button></div>
+        <p class="publish-description">제목과 앨범 표지를 확인한 뒤 공개하세요. 표지를 선택하지 않으면 기본 아트가 사용됩니다.</p>
+        <label class="field-label" for="publish-title-input">공개 제목</label>
+        <input class="text-input" id="publish-title-input" type="text" maxlength="120" required />
+        <label class="field-label" for="publish-cover-input">앨범 표지 <span class="optional">선택</span></label>
+        <div class="publish-cover-row"><div class="publish-cover-preview" id="publish-cover-preview" aria-hidden="true"><svg class="icon"><use href="#icon-title"></use></svg></div><div><input id="publish-cover-input" type="file" accept="image/png,image/jpeg,image/webp" /><p class="field-hint">JPG, PNG, WebP · 최대 5MB</p></div></div>
+        <label class="field-label" for="publish-artist">공개 아티스트</label>
+        <select class="text-input" id="publish-artist" required></select>
+        <label class="field-label" for="publish-album">공개 유형</label>
+        <select class="text-input" id="publish-album"><option value="">싱글로 공개</option></select>
+        <p class="form-error" id="publish-error" role="alert" hidden></p>
+        <div class="publish-actions"><button class="filter-button" id="publish-cancel" type="button">취소</button><button class="primary-button" id="publish-submit" type="submit">라이브러리에 공개</button></div>
+      </form>
+    </dialog>
+
 
     <footer class="player-bar" aria-label="음악 플레이어">
       <audio id="studio-player" preload="metadata"></audio>

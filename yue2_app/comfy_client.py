@@ -50,6 +50,7 @@ class ComfyClient:
         self.progress: dict[str, dict[str, Any]] = {}
         self._progress_nodes: dict[str, dict[str, str]] = {}
         self._progress_samples: dict[str, deque[tuple[float, int]]] = {}
+        self.event_listener = None
 
     async def watch_progress(self, client_id: str) -> None:
         """Receive progress for prompts submitted by this Studio session."""
@@ -67,6 +68,12 @@ class ComfyClient:
                             continue
                         if isinstance(event, dict):
                             self._record_progress(event)
+                            if self.event_listener is not None:
+                                try:
+                                    self.event_listener(event)
+                                except Exception:
+                                    # A Studio subscriber must not disconnect the ComfyUI feed.
+                                    pass
             except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
                 pass
             await asyncio.sleep(2)

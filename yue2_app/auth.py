@@ -267,7 +267,7 @@ class AuthStore:
         token = secrets.token_urlsafe(32)
         csrf = secrets.token_urlsafe(32)
         with self._connection() as db:
-            db.execute("DELETE FROM sessions WHERE user_id = ? OR expires_at <= ?", (user_id, _now().isoformat()))
+            db.execute("DELETE FROM sessions WHERE expires_at <= ?", (_now().isoformat(),))
             db.execute("INSERT INTO sessions VALUES (?, ?, ?, ?)",
                        (hashlib.sha256(token.encode()).hexdigest(), user_id, csrf, (_now() + timedelta(days=SESSION_DAYS)).isoformat()))
         return token, csrf

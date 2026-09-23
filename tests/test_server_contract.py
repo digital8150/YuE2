@@ -62,8 +62,12 @@ class ServerContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_entrypoint_and_static_assets_are_served(self) -> None:
         for path, content_type in (
             ("/", "text/html"),
+            ("/backoffice.html", "text/html"),
             ("/static/styles.css", "text/css"),
+            ("/static/backoffice.js", "javascript"),
             ("/static/app.js", "javascript"),
+            ("/static/favicon.svg", "image/svg+xml"),
+            ("/static/prompt_assistant.js", "javascript"),
         ):
             with self.subTest(path=path):
                 response = await self.client.get(path)
@@ -104,7 +108,14 @@ class ServerContractTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get("/api/library")
         self.assertEqual(response.status, 200)
         payload = await response.json()
+        self.assertEqual(payload, [])
+        form = FormData()
+        form.add_field("title", "공개 제목", content_type="text/plain")
+        published = await self.client.post("/api/tracks/track-1/publish", data=form, headers={"X-Yue2-CSRF": self.csrf})
+        self.assertEqual(published.status, 200, await published.text())
+        payload = await (await self.client.get("/api/library")).json()
         self.assertEqual([item["id"] for item in payload], ["track-1"])
+        self.assertEqual(payload[0]["title"], "공개 제목")
         self.assertEqual(payload[0]["audio_url"], "/api/tracks/track-1/audio")
 
     async def test_cancelled_job_stops_showing_as_active(self) -> None:
