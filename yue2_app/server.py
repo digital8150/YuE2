@@ -416,8 +416,8 @@ def _may_manage(job: Job, user: User) -> bool:
     return job.creator_id == user.id or user.role == "admin" and job.creator_id is None
 
 
-def _may_read(job: Job, user: User) -> bool:
-    return _may_manage(job, user) or (job.published_at is not None and job.status == "completed")
+def _may_read(job: Job, user: User | None) -> bool:
+    return bool(user and _may_manage(job, user)) or (job.published_at is not None and job.status == "completed")
 
 
 async def _sync_job(app: web.Application, job: Job) -> Job:
@@ -801,8 +801,17 @@ async def access_control(request: web.Request, handler):
             return _error("허용되지 않은 출처입니다.", 403)
     if not path.startswith("/api/") or path in {"/api/auth/register", "/api/auth/login", "/api/auth/setup-status", "/api/auth/setup", "/api/auth/me"}:
         return await handler(request)
+    public_library_path = request.method in {"GET", "HEAD"} and (
+        path in {"/api/library", "/api/library/discover", "/api/library/charts"}
+        or re.fullmatch(r"/api/library/tracks/[^/]+", path)
+        or (path != "/api/artists/mine" and re.fullmatch(r"/api/artists/[^/]+(?:/avatar|/banner)?", path))
+        or re.fullmatch(r"/api/albums/[^/]+(?:/cover)?", path)
+        or re.fullmatch(r"/api/tracks/[^/]+/(?:cover|audio|download)", path)
+    )
     session = request.app["auth"].session(request.cookies.get("yue2_session", ""))
     if session is None:
+        if public_library_path:
+            return await handler(request)
         return _error("로그인이 필요합니다.", 401)
     request["user"], request["csrf_token"] = session
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
@@ -1222,13 +1231,14 @@ async def artist_page(request: web.Request) -> web.Response:
         return _error(INPUT_ERROR, 400)
     tracks = repository.list_artist_tracks(artist_id)
     profile = repository.get_artist(artist_id)
-    is_mine = bool(profile and profile["user_id"] == request["user"].id)
+    user = request.get("user")
+    is_mine = bool(profile and user and profile["user_id"] == user.id)
     if not tracks and not is_mine:
         return _error("아티스트를 찾을 수 없습니다.", 404)
     albums = [album for album in repository.list_albums(owner_id=profile["user_id"] if profile else None)
               if album["artist_id"] == artist_id]
     return web.json_response({
-        "artist": _public_artist(artist_id, repository, request["user"].display_name),
+        "artist": _public_artist(artist_id, repository, user.display_name if user else "아티스트"),
         "albums": [_public_album(album, repository) for album in albums],
         "tracks": [_public_library_job(job, repository) for job in tracks],
         "is_mine": is_mine,
@@ -1288,7 +1298,8 @@ async def artist_image(request: web.Request) -> web.StreamResponse:
     profile = repository.get_artist(artist_id)
     tracks = repository.list_artist_tracks(artist_id, 1)
     field = "avatar_filename" if request.match_info["kind"] == "avatar" else "banner_filename"
-    if not profile or not profile[field] or (not tracks and profile["user_id"] != request["user"].id):
+    user = request.get("user")
+    if not profile or not profile[field] or (not tracks and (not user or profile["user_id"] != user.id)):
         return _error("이미지를 찾을 수 없습니다.", 404)
     path = request.app["cover_dir"] / profile[field]
     if not path.is_file():
@@ -1348,18 +1359,20 @@ async def update_album(request: web.Request) -> web.Response:
 async def album_page(request: web.Request) -> web.Response:
     repository: Repository = request.app["repository"]
     album = repository.get_album(request.match_info["album_id"])
-    if album is None or (album["track_count"] == 0 and album["owner_id"] != request["user"].id):
+    user = request.get("user")
+    if album is None or (album["track_count"] == 0 and (not user or album["owner_id"] != user.id)):
         return _error("앨범을 찾을 수 없습니다.", 404)
     return web.json_response({
         "album": _public_album(album, repository),
         "tracks": [_public_library_job(job, repository) for job in repository.list_album_tracks(album["id"])],
-        "is_mine": album["owner_id"] == request["user"].id,
+        "is_mine": bool(user and album["owner_id"] == user.id),
     })
 
 
 async def album_cover(request: web.Request) -> web.StreamResponse:
     album = request.app["repository"].get_album(request.match_info["album_id"])
-    if album is None or not album["cover_filename"] or (album["track_count"] == 0 and album["owner_id"] != request["user"].id):
+    user = request.get("user")
+    if album is None or not album["cover_filename"] or (album["track_count"] == 0 and (not user or album["owner_id"] != user.id)):
         return _error("표지를 찾을 수 없습니다.", 404)
     path = request.app["cover_dir"] / album["cover_filename"]
     if not path.is_file():
@@ -1383,7 +1396,7 @@ def _sanitize_download_name(title: str | None) -> str:
 async def _track_response(request: web.Request, download: bool) -> web.StreamResponse:
     repository: Repository = request.app["repository"]
     job = repository.get_job(request.match_info["job_id"])
-    if job is None or not _may_read(job, request["user"]):
+    if job is None or not _may_read(job, request.get("user")):
         return _error("트랙을 찾을 수 없습니다.", 404)
     job = await _sync_job(request.app, job)
     if job.status != "completed" or not job.output_filename:

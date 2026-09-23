@@ -59,7 +59,11 @@ async def preview_user(request):
 async def jobs(request):
     return web.json_response([
         {"id": "preview-running", "title": "만들고 있는 음악", "style": "Cinematic, strings",
-         "mode": "original", "status": "running", "created_at": "2026-09-23T01:00:00Z"},
+         "mode": "original", "status": "running", "created_at": "2026-09-23T01:00:00Z",
+         "progress": {"phase": "music", "current": 250, "total": 500}},
+        {"id": "preview-cover", "title": "커버 만드는 중", "style": "Indie pop",
+         "mode": "cover", "status": "running", "created_at": "2026-09-23T01:00:00Z",
+         "progress": {"phase": "sheet", "current": 3, "total": 10}},
         {"id": "preview-failed", "title": "다시 시도할 음악", "style": "Indie pop",
          "mode": "cover", "status": "failed", "error": "미리보기용 오류 상태입니다."},
         *TRACKS[:6],

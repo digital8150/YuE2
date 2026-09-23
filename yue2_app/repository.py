@@ -342,7 +342,7 @@ class Repository:
             ).fetchall()
         return self._from_rows(rows)
 
-    def list_charts(self, limit: int = 20) -> list[Job]:
+    def list_charts(self, limit: int = 100) -> list[Job]:
         with self._connection() as connection:
             rows = connection.execute(
                 """SELECT * FROM jobs WHERE published_at IS NOT NULL AND status = 'completed'

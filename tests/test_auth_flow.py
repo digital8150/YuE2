@@ -59,7 +59,8 @@ class AuthFlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_invite_code_onboarding_and_shared_attribution(self):
         self.assertEqual((await self.client.get("/api/auth/setup-status")).status, 200)
-        self.assertEqual((await self.client.get("/api/library")).status, 401)
+        self.assertEqual(await (await self.client.get("/api/library")).json(), [])
+        self.assertEqual((await self.client.get("/api/jobs")).status, 401)
         admin_data = {"username": "captain", "display_name": "회장", "password": "first-password-123", "setup_code": "wrong"}
         self.assertEqual((await self.client.post("/api/auth/setup", json=admin_data)).status, 403)
         admin_data["setup_code"] = "setup-secret"
@@ -133,7 +134,8 @@ class AuthFlowTests(unittest.IsolatedAsyncioTestCase):
 
         # Member logs out
         self.assertEqual((await self.client.post("/api/auth/logout", headers={"X-Yue2-CSRF": member_csrf})).status, 200)
-        self.assertEqual((await self.client.get("/api/library")).status, 401)
+        self.assertEqual((await (await self.client.get("/api/library")).json())[0]["creator"], "동아리원")
+        self.assertEqual((await self.client.get("/api/jobs")).status, 401)
 
 
 if __name__ == "__main__":

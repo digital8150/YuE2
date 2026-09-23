@@ -49,6 +49,7 @@
     lyricsCount: $("#lyrics-count"),
     player: $("#studio-player"),
     playerTitle: $("#player-title"),
+    playerBar: $(".player-bar"),
     playerSubtitle: $("#player-subtitle"),
     playerArt: $("#player-art"),
     playerToggle: $("#player-toggle"),
@@ -109,6 +110,8 @@
     queuePageRefresh: $("#queue-page-refresh"),
     queuePageOpenPip: $("#queue-page-open-pip"),
     queuePageEngineStatus: $("#queue-page-engine-status"),
+    queuePageBannerLeft: $("#queue-page-banner .queue-banner-left"),
+    queuePageCreate: $("#queue-page-create"),
     queuePageGpu: $("#queue-page-gpu"),
     queuePageRunning: $("#queue-page-running"),
     queuePagePending: $("#queue-page-pending"),
@@ -143,6 +146,8 @@
     cover: defaults.cover.duration
   };
   let composerPersistenceReady = false;
+  let guestComposerTouched = false;
+  let signedInStarted = false;
 
   const state = {
     view: getViewFromHash(),
@@ -437,9 +442,9 @@
   function setHealthStatus(ready, checked = true) {
     state.healthReady = ready;
     refs.connectionStatuses.forEach((statusNode) => {
-      statusNode.classList.toggle("is-ready", ready);
+      statusNode.hidden = ready || !checked;
       const label = $(".connection-label", statusNode);
-      if (label) label.textContent = ready ? "준비됨" : checked ? "연결 안 됨" : "연결 확인 중";
+      if (label) label.textContent = "지금은 음악을 만들 수 없습니다";
     });
   }
 
@@ -739,6 +744,10 @@
 
   async function submitGeneration(event) {
     event.preventDefault();
+    if (!window.yue2Auth?.ready) {
+      window.yue2Auth?.open?.();
+      return;
+    }
     if (state.isSubmitting || !validateForm()) return;
     setSubmitting(true);
     try {
@@ -749,7 +758,7 @@
       clearFormError();
       Growl.info({
         title: "음악 생성 시작",
-        message: "요청이 성공적으로 전송되었습니다. 작업 공간에서 진행률을 실시간으로 확인해보세요.",
+        message: "내 스튜디오에서 진행 상태를 확인할 수 있습니다.",
         duration: 5000
       });
       if (!state.jobs.some((job) => job.id === created.id)) applyJobUpdate(created);
@@ -767,6 +776,7 @@
   }
 
   async function loadJobs({ initial = false, reset = true } = {}) {
+    if (!window.yue2Auth?.ready) return;
     if (state.jobsLoading) {
       state.jobsResyncRequested = true;
       return;
@@ -819,7 +829,7 @@
             } else if (job.status === "failed") {
               Growl.error({
                 title: "음악 생성 실패",
-                message: job.error || "곡 생성을 완료하지 못했습니다.",
+                message: "곡을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.",
                 duration: 7000
               });
             }
@@ -877,7 +887,7 @@
           }
         });
       } else if (job.status === "failed") {
-        Growl.error({ title: "음악 생성 실패", message: job.error, duration: 7000 });
+        Growl.error({ title: "음악 생성 실패", message: "곡을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.", duration: 7000 });
       }
     }
     state.knownJobStatuses.set(job.id, job.status);
@@ -1029,10 +1039,8 @@
       refs.jobsList.innerHTML = "";
       refs.jobsList.append(
         element("div", { className: "jobs-empty" }, [
-          element("div", { className: "empty-wave", attrs: { "aria-hidden": "true" } }, Array.from({ length: 7 }, () => element("i"))),
-          element("strong", { text: query || filter !== "all" ? "조건에 맞는 작업이 없어요" : "당신의 다음 음악, 여기서 시작해요" }),
-          element("span", { text: query || filter !== "all" ? "검색어나 상태 필터를 바꿔 보세요." : "가사와 스타일을 더하고, 첫 번째 곡을 만들어 보세요." }),
-          element("div", { className: "empty-hint", text: "완성된 음악은 내 스튜디오에 저장되며, 선택한 곡만 공개됩니다" })
+          element("strong", { text: query || filter !== "all" ? "조건에 맞는 곡이 없습니다" : "아직 만든 곡이 없습니다" }),
+          element("span", { text: query || filter !== "all" ? "검색어나 상태 필터를 바꿔 보세요." : "왼쪽에서 스타일을 입력해 곡을 만들어 보세요." })
         ])
       );
       if (refs.jobsPaginationWrap) refs.jobsPaginationWrap.hidden = true;
@@ -1053,45 +1061,69 @@
     syncPlayerButtons();
   }
 
-  const jobProgressLabels = {
-    preparing: "모델 준비 중", abc: "악보 생성", music: "음악 토큰 생성",
-    rendering: "오디오 렌더링", finishing: "마무리 중"
+  const progressStageLabels = {
+    original: ["ABC", "Music Token Sampling", "KSampler"],
+    cover: ["Sheet (Audio to ABC)", "Music Token Sampling", "KSampler"]
   };
 
+  function generationProgress(mode, progress = {}) {
+    const phase = progress?.phase;
+    const stage = phase === "abc" || phase === "sheet" ? 0 : phase === "music" ? 1 : phase === "rendering" ? 2 : -1;
+    const current = Number(progress?.current);
+    const total = Number(progress?.total);
+    const fraction = Number.isFinite(current) && Number.isFinite(total) && total > 0
+      ? Math.max(0, Math.min(1, current / total)) : 0;
+    const percent = phase === "finishing" ? 99 : stage < 0 ? 0 : Math.round(stage * 33 + fraction * 33);
+    const labels = progressStageLabels[normalizeMode(mode)];
+    const status = phase === "finishing" ? "저장 중" : stage < 0 ? "준비 중" : labels[stage];
+    return { percent, status, labels };
+  }
+
+  function createGenerationProgress(mode, progress, className = "") {
+    const section = element("div", { className: `generation-progress ${className}` }, [
+      element("div", { className: "generation-progress-head" }, [
+        element("span", { className: "generation-progress-status" }),
+        element("span", { className: "generation-progress-percent" })
+      ]),
+      element("div", { className: "generation-progress-segments", attrs: { "aria-hidden": "true" } },
+        Array.from({ length: 3 }, () => element("span", { className: "generation-progress-segment" }, [
+          element("span", { className: "generation-progress-fill" })
+        ]))),
+      element("div", { className: "generation-progress-labels", attrs: { "aria-hidden": "true" } },
+        Array.from({ length: 3 }, () => element("span")))
+    ]);
+    updateGenerationProgress(section, mode, progress);
+    return section;
+  }
+
+  function updateGenerationProgress(section, mode, progress) {
+    const display = generationProgress(mode, progress);
+    section.setAttribute("role", "progressbar");
+    section.setAttribute("aria-label", `음악 생성: ${display.status}`);
+    section.setAttribute("aria-valuemin", "0");
+    section.setAttribute("aria-valuemax", "100");
+    section.setAttribute("aria-valuenow", String(display.percent));
+    $(".generation-progress-status", section).textContent = display.status;
+    $(".generation-progress-percent", section).textContent = `${display.percent}%`;
+    $$(".generation-progress-fill", section).forEach((fill, index) => {
+      fill.style.transform = `scaleX(${Math.max(0, Math.min(1, (display.percent - index * 33) / 33))})`;
+    });
+    $$(".generation-progress-labels span", section).forEach((label, index) => {
+      label.textContent = display.labels[index];
+      label.classList.toggle("is-current", display.status === display.labels[index]);
+    });
+  }
+
   function syncJobProgress(card, job) {
-    if (job.status !== "processing" || !job.progress) return;
+    if (job.status !== "processing") return;
     const copy = $(".job-copy", card);
     if (!copy) return;
     let section = $(".job-progress", copy);
     if (!section) {
-      section = element("div", { className: "job-progress" }, [
-        element("span", { className: "job-progress-details" })
-      ]);
+      section = createGenerationProgress(job.mode, job.progress, "job-progress");
       copy.append(section);
-    }
-    const progress = job.progress;
-    const current = Number(progress.current);
-    const total = Number(progress.total);
-    const measured = Number.isFinite(current) && Number.isFinite(total) && total > 0;
-    const label = jobProgressLabels[progress.phase] || "음악 생성 중";
-    const details = [label];
-    if (measured) details.push(`${current.toLocaleString()} / ${total.toLocaleString()} ${progress.phase === "rendering" ? "단계" : "토큰"}`);
-    if (measured && progress.phase === "music") details.push(`약 ${(current / 25).toFixed(1)}초 분량`);
-    if (["abc", "music"].includes(progress.phase) && Number.isFinite(Number(progress.rate)) && Number(progress.rate) > 0) {
-      details.push(`${Number(progress.rate).toFixed(1)} 토큰/s`);
-    }
-    $(".job-progress-details", section).textContent = details.join(" · ");
-    let bar = $("progress", section);
-    if (measured) {
-      if (!bar) {
-        bar = element("progress");
-        section.append(bar);
-      }
-      bar.max = total;
-      bar.value = Math.min(current, total);
-      bar.setAttribute("aria-label", label);
-    } else if (bar) {
-      bar.remove();
+    } else {
+      updateGenerationProgress(section, job.mode, job.progress);
     }
   }
 
@@ -1107,14 +1139,14 @@
     }, [svgIcon(playable ? "play" : "wave")]);
     applyArtwork(artwork, job.id);
     applyCover(artwork, job);
+    const shortStyle = safeText(job.style).split(",").map((part) => part.trim()).filter(Boolean).slice(0, 3).join(" · ");
     const copy = element("div", { className: "job-copy" }, [
       title,
-      element("p", { className: "job-style", text: job.style }),
+      shortStyle ? element("p", { className: "job-style", text: shortStyle, attrs: { title: job.style } }) : null,
       element("div", { className: "job-card-meta" }, [
         element("span", { text: modeLabel(job.mode) }),
         element("span", { text: "·" }),
-        element("span", { text: formatRelative(job.createdAt) }),
-        element("span", { text: job.creator })
+        element("span", { text: formatRelative(job.createdAt) })
       ])
     ]);
     const foot = element("div", { className: "job-card-foot" }, [badge]);
@@ -1122,7 +1154,7 @@
     syncJobProgress(card, job);
 
     if (job.status === "failed") {
-      copy.append(element("p", { className: "job-error", text: job.error }));
+      copy.append(element("p", { className: "job-error", text: "곡을 만들지 못했습니다. 잠시 후 다시 시도해 주세요." }));
     } else if (job.status === "completed") {
       const action = element("button", {
         className: "library-action",
@@ -1180,6 +1212,10 @@
 
   function syncPlayerButtons() {
     const playing = Boolean(state.playerTrack) && !refs.player.paused && !refs.player.ended;
+    const hasTrack = Boolean(state.playerTrack);
+    refs.playerBar.hidden = !hasTrack;
+    refs.playerBar.inert = !playing;
+    refs.playerBar.setAttribute("aria-hidden", String(!playing));
     document.body.classList.toggle("is-playing", playing);
     if (playing) {
       AudioVisualizer.start();
@@ -1239,7 +1275,7 @@
       return;
     }
     state.playerTrack = track;
-    if (track.published) {
+    if (track.published && window.yue2Auth?.ready) {
       void fetchJson(`/api/tracks/${encodeURIComponent(track.id)}/play`, { method: "POST" })
         .then(() => { state.libraryHomeLoaded = false; }).catch(() => {});
     }
@@ -1296,25 +1332,45 @@
       element("div", { className: "empty-state" }, [
         element("div", { className: "empty-state-inner" }, [
           element("span", { className: "empty-state-mark", attrs: { "aria-hidden": "true" } }, [svgIcon(isFiltered ? "search" : "title")]),
-          element("h2", { text: isFiltered ? "찾는 음악이 없어요." : "아직 공개된 음악이 없어요." }),
-          element("p", { text: isFiltered ? "다른 검색어 또는 필터로 다시 찾아보세요." : "내 스튜디오에서 완성된 곡을 골라 공개해 보세요." }),
-          isFiltered ? null : element("a", { className: "new-track-link", text: "첫 곡 만들기", attrs: { href: "#create" } })
+          element("h2", { text: isFiltered ? "검색 결과가 없습니다" : "아직 공개된 곡이 없습니다" }),
+          element("p", { text: isFiltered ? "검색어나 필터를 바꿔 보세요." : "내 스튜디오에서 완성한 곡을 선택해 공개하세요." }),
+          isFiltered ? null : element("a", { className: "new-track-link", text: "내 스튜디오", attrs: { href: "#create" } })
         ])
       ])
     );
   }
 
   function renderLibrary() {
+    if (state.view !== "library" || libraryParams().get("view") !== "all") return;
+    const searching = Boolean(state.library.query.trim());
+    refs.libraryGrid.hidden = searching;
+    refs.libraryContent.hidden = !searching;
     if (state.library.loading) {
       refs.libraryStatus.textContent = "음악을 불러오는 중…";
-      renderLibrarySkeletons();
+      if (searching) refs.libraryContent.replaceChildren(element("p", { className: "library-loading", text: "검색 결과를 불러오는 중…" }));
+      else renderLibrarySkeletons();
       return;
     }
     if (state.library.error) {
-      refs.libraryStatus.textContent = state.library.error;
-      renderEmptyLibrary(true);
+      refs.libraryStatus.textContent = "";
+      if (searching) refs.libraryContent.replaceChildren(element("div", { className: "library-landing-empty" }, [
+        element("h2", { text: "검색 결과를 불러오지 못했습니다" }),
+        element("button", { className: "library-secondary-action", text: "다시 검색", attrs: { type: "button" }, on: { click: () => loadLibrary() } })
+      ]));
+      if (searching) return;
+      refs.libraryGrid.replaceChildren(element("div", { className: "empty-state" }, [
+        element("div", { className: "empty-state-inner" }, [
+          element("h2", { text: "곡 목록을 불러오지 못했습니다" }),
+          element("button", { className: "new-track-link", text: "다시 불러오기", attrs: { type: "button" }, on: { click: () => loadLibrary() } })
+        ])
+      ]));
       return;
     }
+    if (searching) {
+      renderLibrarySearchResults();
+      return;
+    }
+    refs.libraryContent.replaceChildren();
     const isFiltered = Boolean(state.library.query.trim()) || state.library.mode !== "all";
     if (state.library.items.length === 0) {
       refs.libraryStatus.textContent = "";
@@ -1341,7 +1397,7 @@
 
   function releaseTile(item, type = "track") {
     const isAlbum = type === "album";
-    const track = isAlbum ? null : normalizeTrack(item);
+    const track = isAlbum ? null : item;
     const art = element("div", { className: "release-art" }, [svgIcon(isAlbum ? "library" : "wave")]);
     applyArtwork(art, item.id);
     applyCover(art, { coverUrl: item.cover_url || track?.coverUrl });
@@ -1374,80 +1430,132 @@
   }
 
   function artistTile(artist) {
-    const art = element("div", { className: "artist-tile-art" }, [element("span", { text: artist.name.slice(0, 1) })]);
     const url = safeMediaUrl(artist.avatar_url);
+    const art = element("div", { className: "artist-tile-art" },
+      url ? [] : [element("span", { text: artist.name.slice(0, 1) })]);
     if (url) art.style.backgroundImage = `url("${url}")`;
     return element("a", { className: "artist-tile", attrs: { href: `#library?artist=${artist.id}` } }, [
       art, element("strong", { text: artist.name }), element("span", { text: `${artist.track_count}곡 공개` })
     ]);
   }
 
-  function renderLibraryHome(data) {
+  function renderLibrarySearchResults() {
+    const query = state.library.query.trim().toLocaleLowerCase();
+    const home = state.libraryHome || {};
+    const artists = (home.artists || []).filter((item) => item.name.toLocaleLowerCase().includes(query));
+    const albums = (home.albums || []).filter((item) => `${item.title} ${item.artist_name}`.toLocaleLowerCase().includes(query));
+    const tracks = state.library.items;
+    refs.libraryStatus.textContent = `${tracks.length + artists.length + albums.length}개의 검색 결과`;
+    refs.libraryContent.replaceChildren();
+    if (tracks.length) {
+      const section = librarySection("인기 검색 결과");
+      const grid = element("div", { className: "library-search-results" });
+      tracks.slice(0, 6).forEach((track) => {
+        const art = element("div", { className: "search-result-art" }, [svgIcon("wave")]);
+        applyArtwork(art, track.id); applyCover(art, track);
+        grid.append(element("a", { className: "search-result", attrs: { href: `#library?single=${encodeURIComponent(track.id)}` } }, [
+          art, element("div", { className: "search-result-copy" }, [
+            element("strong", { text: track.title }), element("span", { text: `노래 · ${track.creator}` })
+          ]), svgIcon("play")
+        ]));
+      });
+      section.append(grid); refs.libraryContent.append(section);
+    }
+    if (artists.length) {
+      const section = librarySection("아티스트");
+      const grid = element("div", { className: "artist-grid" });
+      artists.forEach((artist) => grid.append(artistTile(artist)));
+      section.append(grid); refs.libraryContent.append(section);
+    }
+    if (albums.length) {
+      const section = librarySection("앨범");
+      const grid = element("div", { className: "release-grid" });
+      albums.forEach((album) => grid.append(releaseTile(album, "album")));
+      section.append(grid); refs.libraryContent.append(section);
+    }
+    if (!tracks.length && !artists.length && !albums.length) {
+      refs.libraryContent.append(element("div", { className: "library-landing-empty" }, [
+        element("h2", { text: "검색 결과가 없습니다" }),
+        element("p", { text: "다른 노래, 앨범 또는 아티스트 이름으로 검색해 보세요." })
+      ]));
+    }
+  }
+
+  function renderLibraryHome(data, page = "discover") {
     const releases = (data.new_releases || []).map(normalizeTrack);
     const thisWeek = (data.this_week || []).map(normalizeTrack);
     const charts = (data.charts || []).map(normalizeTrack);
     const albums = data.albums || [];
     const artists = data.artists || [];
     refs.libraryContent.replaceChildren();
-    const featured = librarySection("새로운 음악", "지금 막 공개된 사운드");
+    const featured = librarySection(page === "new" ? "지금 주목할 음악" : "인기 추천곡");
     const featureGrid = element("div", { className: "feature-grid" });
-    const featuredItems = [...albums.slice(0, 2).map((item) => ({ type: "album", item })),
-      ...releases.filter((item) => !item.albumId).slice(0, 3).map((item) => ({ type: "track", item }))].slice(0, 3);
+    const featuredItems = [...albums.slice(0, page === "new" ? 1 : 2).map((item) => ({ type: "album", item })),
+      ...releases.slice(0, 5).map((item) => ({ type: "track", item }))].slice(0, page === "new" ? 3 : 5);
     featuredItems.forEach(({ type, item }) => featureGrid.append(releaseTile(item, type)));
     if (featuredItems.length) { featured.append(featureGrid); refs.libraryContent.append(featured); }
 
+    if (page === "discover" && releases.length) {
+      const section = librarySection("최근 공개된 음악");
+      const grid = element("div", { className: "release-grid" });
+      releases.slice(0, 6).forEach((track) => grid.append(releaseTile(track)));
+      section.append(grid);
+      refs.libraryContent.append(section);
+    }
     if (charts.length) {
-      const section = librarySection("인기 곡", "가장 많이 재생된 음악");
+      const section = librarySection(page === "new" ? "인기 신곡" : "인기 곡");
       const list = element("div", { className: "chart-grid" });
       charts.slice(0, 12).forEach((track, index) => list.append(chartRow(track, index + 1, charts)));
       section.append(list);
       refs.libraryContent.append(section);
     }
-    if (thisWeek.length) {
-      const section = librarySection("이번 주 신곡", "새 싱글과 앨범 수록곡");
+    if (thisWeek.length && page === "new") {
+      const section = librarySection("이번 주 신곡");
       const grid = element("div", { className: "release-grid" });
       thisWeek.slice(0, 8).forEach((track) => grid.append(releaseTile(track)));
       section.append(grid);
       refs.libraryContent.append(section);
     }
     if (albums.length) {
-      const section = librarySection("앨범", "아티스트가 꾸린 음악 모음");
+      const section = librarySection("앨범");
       const grid = element("div", { className: "release-grid" });
       albums.slice(0, 8).forEach((album) => grid.append(releaseTile(album, "album")));
       section.append(grid);
       refs.libraryContent.append(section);
     }
-    if (artists.length) {
-      const section = librarySection("아티스트", "이곳의 음악을 만드는 사람들");
+    if (artists.length && page === "discover") {
+      const section = librarySection("아티스트");
       const grid = element("div", { className: "artist-grid" });
       artists.forEach((artist) => grid.append(artistTile(artist)));
       section.append(grid);
       refs.libraryContent.append(section);
     }
-    if (!featuredItems.length && !charts.length) {
+    if (!featuredItems.length && !charts.length && !thisWeek.length && !albums.length && !artists.length) {
       refs.libraryContent.append(element("div", { className: "library-landing-empty" }, [
-        element("h2", { text: "첫 공개를 기다리고 있어요" }),
-        element("p", { text: "내 스튜디오에서 완성한 곡을 선택해 라이브러리에 공개해 보세요." }),
-        element("a", { className: "new-track-link", text: "내 스튜디오로 이동", attrs: { href: "#create" } })
+        element("h2", { text: "아직 공개된 곡이 없습니다" }),
+        element("p", { text: "내 스튜디오에서 완성한 곡을 선택해 공개하세요." }),
+        element("a", { className: "new-track-link", text: "내 스튜디오", attrs: { href: "#create" } })
       ]));
     }
   }
 
   function renderLibraryDetail(data, kind) {
     refs.libraryContent.replaceChildren();
+    refs.libraryContent.append(element("a", { className: "library-back", text: "‹  라이브러리", attrs: { href: "#library" } }));
     if (kind === "single") {
       const track = normalizeTrack(data);
       const hero = element("div", { className: "album-hero" });
       const art = element("div", { className: "album-hero-art" }, [svgIcon("wave")]);
       applyArtwork(art, track.id); applyCover(art, track);
-      hero.append(art, element("div", {}, [element("p", { className: "eyebrow", text: track.albumId ? "ALBUM TRACK" : "SINGLE" }),
+      hero.append(art, element("div", { className: "album-hero-copy" }, [
         element("h2", { text: track.title }),
         track.artistId ? element("a", { text: track.creator, attrs: { href: `#library?artist=${encodeURIComponent(track.artistId)}` } }) : null,
+        element("p", { className: "album-meta", text: "싱글" }),
         element("p", { text: track.style })]));
       refs.libraryContent.append(hero);
       const actions = element("div", { className: "single-actions" }, [
-        element("button", { className: "new-track-link", text: "재생", attrs: { type: "button" }, on: { click: () => playTrack(track, [track]) } }),
-        element("button", { className: "new-track-link", text: "내 스튜디오로 가져오기", attrs: { type: "button" }, on: { click: () => importRecipe(track) } })
+        element("button", { className: "library-play-all", attrs: { type: "button" }, on: { click: () => playTrack(track, [track]) } }, [svgIcon("play"), element("span", { text: "재생" })]),
+        element("button", { className: "library-secondary-action", text: "내 스튜디오로 가져오기", attrs: { type: "button" }, on: { click: () => importRecipe(track) } })
       ]);
       refs.libraryContent.append(actions);
       if (data.lyrics) {
@@ -1466,8 +1574,8 @@
       const avatar = element("div", { className: "artist-hero-avatar", text: artist.name.slice(0, 1) });
       const avatarUrl = safeMediaUrl(artist.avatar_url);
       if (avatarUrl) { avatar.style.backgroundImage = `url("${avatarUrl}")`; avatar.textContent = ""; }
-      hero.append(avatar, element("div", {}, [element("p", { className: "eyebrow", text: "ARTIST" }),
-        element("h2", { text: artist.name }), element("p", { text: artist.bio || "새로운 음악을 들려주는 아티스트" }),
+      hero.append(avatar, element("div", {}, [
+        element("h2", { text: artist.name }), artist.bio ? element("p", { text: artist.bio }) : null,
         element("span", { text: `${tracks.length}곡 공개` })]));
       refs.libraryContent.append(hero);
       if (data.albums?.length) {
@@ -1481,15 +1589,26 @@
       const hero = element("div", { className: "album-hero" });
       const art = element("div", { className: "album-hero-art" }, [svgIcon("library")]);
       applyArtwork(art, album.id); applyCover(art, { coverUrl: album.cover_url });
-      hero.append(art, element("div", {}, [element("p", { className: "eyebrow", text: "ALBUM" }),
+      hero.append(art, element("div", { className: "album-hero-copy" }, [
         element("h2", { text: album.title }),
         element("a", { text: album.artist_name, attrs: { href: `#library?artist=${album.artist_id}` } }),
-        element("p", { text: album.description || `${tracks.length}곡의 음악` })]));
+        element("p", { className: "album-meta", text: `앨범 · ${tracks.length}곡` }),
+        album.description ? element("p", { text: album.description }) : null,
+        tracks.length ? element("div", { className: "album-hero-actions" }, [
+          element("button", { className: "library-play-all", attrs: { type: "button" }, on: { click: () => playTrack(tracks[0], tracks) } }, [svgIcon("play"), element("span", { text: "재생" })]),
+          element("button", { className: "library-secondary-action", attrs: { type: "button" }, on: { click: () => playTrack(tracks[Math.floor(Math.random() * tracks.length)], tracks) } }, [svgIcon("shuffle"), element("span", { text: "임의 재생" })])
+        ]) : null]));
       refs.libraryContent.append(hero);
     }
     const section = librarySection(kind === "artist" ? "공개한 음악" : "수록곡");
-    const grid = element("div", { className: "library-grid" });
-    tracks.forEach((track) => grid.append(createTrackCard(track)));
+    const grid = element("div", { className: kind === "album" ? "album-track-list" : "library-grid" });
+    tracks.forEach((track, index) => grid.append(kind === "album" ? element("div", { className: "album-track-row" }, [
+      element("span", { className: "album-track-number", text: String(index + 1) }),
+      element("button", { className: "album-track-main", attrs: { type: "button", "aria-label": `${track.title} 재생` }, on: { click: () => playTrack(track, tracks) } }, [
+        element("strong", { text: track.title }), element("span", { text: track.creator })
+      ]),
+      element("button", { className: "album-track-remix", attrs: { type: "button", "aria-label": `${track.title} 내 스튜디오로 가져오기` }, on: { click: () => importRecipe(track) } }, [svgIcon("more")])
+    ]) : createTrackCard(track)));
     if (!tracks.length) grid.append(element("p", { className: "page-description", text: "공개된 음악이 없습니다." }));
     section.append(grid);
     refs.libraryContent.append(section);
@@ -1499,17 +1618,23 @@
     const params = libraryParams();
     const detail = params.has("artist") ? "artist" : params.has("album") ? "album" : params.has("single") ? "single" : "";
     const tab = detail ? "" : params.get("view") || "discover";
+    const requestId = ++state.libraryPageRequestId;
+    refs.libraryView.classList.toggle("is-detail", Boolean(detail));
+    refs.libraryView.classList.toggle("is-album-detail", detail === "album");
+    refs.libraryView.classList.toggle("is-new-music", tab === "new");
+    $("#library-title").textContent = tab === "new" ? "새로운 음악" : tab === "charts" ? "차트" : tab === "all" ? "검색" : "홈";
+    $("#library-description").textContent = tab === "all" ? "공개된 음악을 찾아보세요." : tab === "charts" ? "많이 재생된 음악을 만나보세요." : tab === "new" ? "새로 공개된 음악을 만나보세요." : "공개된 음악을 만나보세요.";
     refs.libraryTabs.forEach((link) => link.classList.toggle("is-selected", link.dataset.libraryTab === tab));
     const all = tab === "all";
     refs.libraryToolbar.hidden = !all;
     refs.libraryStatus.hidden = !all;
-    refs.libraryGrid.hidden = !all;
-    refs.libraryContent.hidden = all;
+    refs.libraryGrid.hidden = !all || Boolean(state.library.query.trim());
+    refs.libraryContent.hidden = all && !state.library.query.trim();
     if (all) {
       if (!state.library.loaded && !state.library.loading) loadLibrary();
+      else renderLibrary();
       return;
     }
-    const requestId = ++state.libraryPageRequestId;
     refs.libraryContent.replaceChildren(element("p", { className: "library-loading", text: "음악을 불러오는 중…" }));
     try {
       if (detail) {
@@ -1521,19 +1646,30 @@
         const data = await fetchJson("/api/library/charts");
         if (requestId !== state.libraryPageRequestId) return;
         const tracks = data.map(normalizeTrack);
-        const section = librarySection("인기 차트", "공개된 음악의 재생 수 기준");
+        const section = librarySection("인기 차트", "재생 수 기준");
         const list = element("div", { className: "chart-grid" });
         tracks.forEach((track, index) => list.append(chartRow(track, index + 1, tracks)));
-        section.append(list); refs.libraryContent.replaceChildren(section);
+        if (tracks.length) section.append(list);
+        else section.append(element("div", { className: "library-landing-empty" }, [
+          element("h2", { text: "아직 차트에 표시할 곡이 없습니다" }),
+          element("p", { text: "곡이 공개되면 재생 수에 따라 순위가 표시됩니다." }),
+          element("a", { className: "new-track-link", text: "내 스튜디오", attrs: { href: "#create" } })
+        ]));
+        refs.libraryContent.replaceChildren(section);
       } else {
         if (!state.libraryHomeLoaded) {
           state.libraryHome = await fetchJson("/api/library/discover");
           state.libraryHomeLoaded = true;
         }
-        if (requestId === state.libraryPageRequestId) renderLibraryHome(state.libraryHome);
+        if (requestId === state.libraryPageRequestId) renderLibraryHome(state.libraryHome, tab);
       }
     } catch (error) {
-      if (requestId === state.libraryPageRequestId) refs.libraryContent.replaceChildren(element("p", { className: "library-loading", text: error.message || "라이브러리를 불러오지 못했습니다." }));
+      if (requestId === state.libraryPageRequestId) refs.libraryContent.replaceChildren(
+        element("div", { className: "library-landing-empty" }, [
+          element("h2", { text: "라이브러리를 불러오지 못했습니다" }),
+          element("button", { className: "new-track-link", text: "다시 불러오기", attrs: { type: "button" }, on: { click: () => renderLibraryPage() } })
+        ])
+      );
     }
   }
 
@@ -1614,6 +1750,23 @@
       if (requestId !== state.library.requestId) return;
       const list = extractList(payload, ["tracks", "items", "library", "data"]);
       state.library.items = list.map(normalizeTrack);
+      if (search && !state.libraryHomeLoaded) {
+        try {
+          state.libraryHome = await fetchJson("/api/library/discover");
+          state.libraryHomeLoaded = true;
+        } catch { /* Search still works when recommendations are unavailable. */ }
+      }
+      if (search && state.libraryHome) {
+        const term = search.toLocaleLowerCase();
+        const seen = new Set(state.library.items.map((track) => track.id));
+        for (const raw of [...(state.libraryHome.new_releases || []), ...(state.libraryHome.this_week || []), ...(state.libraryHome.charts || [])]) {
+          const track = normalizeTrack(raw);
+          if (!seen.has(track.id) && `${track.title} ${track.creator} ${track.style}`.toLocaleLowerCase().includes(term)) {
+            state.library.items.push(track);
+            seen.add(track.id);
+          }
+        }
+      }
       state.library.loaded = true;
     } catch {
       if (requestId !== state.library.requestId) return;
@@ -1740,7 +1893,7 @@
       showToast("라이브러리에 공개했습니다.");
       openLibrary(updated.id);
     } catch (error) {
-      refs.publishError.textContent = error.message || "공개하지 못했습니다. 다시 시도해 주세요.";
+      refs.publishError.textContent = "곡을 공개하지 못했습니다. 입력 내용을 확인하고 다시 시도해 주세요.";
       refs.publishError.hidden = false;
     } finally {
       refs.publishSubmit.disabled = false;
@@ -1756,11 +1909,15 @@
       await loadJobs({ reset: false });
       showToast("라이브러리 공개를 취소했습니다.");
     } catch (error) {
-      showToast(error.message || "공개를 취소하지 못했습니다.", "error");
+      showToast("공개를 취소하지 못했습니다. 다시 시도해 주세요.", "error");
     }
   }
 
   async function importRecipe(track) {
+    if (!window.yue2Auth?.ready) {
+      window.yue2Auth?.open?.();
+      return;
+    }
     try {
       const recipe = await fetchJson(`/api/tracks/${encodeURIComponent(track.id)}/recipe`);
       setMode(recipe.mode);
@@ -1799,12 +1956,14 @@
       refs.styleInput.focus();
       showToast(recipe.mode === "cover" ? "설정을 가져왔습니다. 커버의 원본 오디오를 선택해 주세요." : "생성 설정을 내 스튜디오로 가져왔습니다.");
     } catch (error) {
-      showToast(error.message || "생성 설정을 가져오지 못했습니다.", "error");
+      showToast("스타일을 가져오지 못했습니다. 다시 시도해 주세요.", "error");
     }
   }
 
   function renderRoute() {
-    const view = getViewFromHash();
+    const requestedView = getViewFromHash();
+    const view = !window.yue2Auth?.ready && (requestedView === "queue" || requestedView === "backoffice")
+      ? "create" : requestedView;
     if (view !== state.view) window.scrollTo({ top: 0, behavior: "instant" });
     state.view = view;
     refs.viewPanels.forEach((panel) => {
@@ -1818,7 +1977,7 @@
       else link.removeAttribute("aria-current");
     });
     if (view === "library") renderLibraryPage();
-    if (view === "queue" && typeof QueueManager !== "undefined") QueueManager.poll(true);
+    if (view === "queue" && window.yue2Auth?.ready && typeof QueueManager !== "undefined") QueueManager.poll(true);
   }
 
   const Growl = {
@@ -2001,17 +2160,19 @@
     freqData: null,
     timeData: null,
     ambientBass: 0,
-    ambientMid: 0,
-    ambientTreble: 0,
-    ambientEnergy: 0,
+    ambientDrum: 0,
+    drumFloor: 0,
+    playbackBlend: 0,
     flowTime: 0,
     lastFrameTime: 0,
+    reducedMotion: null,
 
     init(canvasNode, audioElement) {
       if (!canvasNode) return;
       this.canvas = canvasNode;
       this.ctx = canvasNode.getContext("2d");
       this.audio = audioElement;
+      this.reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
       this.prevLevels.fill(2);
       this.peakLevels.fill(2);
       this.peakHold.fill(0);
@@ -2036,7 +2197,7 @@
         }
         if (!this.sourceNode) {
           this.analyser = this.audioCtx.createAnalyser();
-          this.analyser.fftSize = 256;
+          this.analyser.fftSize = 2048;
           this.analyser.smoothingTimeConstant = 0.82;
           this.sourceNode = this.audioCtx.createMediaElementSource(this.audio);
           this.sourceNode.connect(this.analyser);
@@ -2055,8 +2216,8 @@
       if (this.audioCtx && this.audioCtx.state === "suspended") {
         this.audioCtx.resume().catch(() => {});
       }
+      if (this.animId) return;
       this.lastFrameTime = performance.now();
-      if (this.animId) cancelAnimationFrame(this.animId);
       this.animId = requestAnimationFrame(this.render);
     },
 
@@ -2066,7 +2227,7 @@
         // then cleanly sleep the loop once baseline/resting state is reached.
         return;
       }
-      if (this.ambientEnergy > 0.005) {
+      if (this.playbackBlend > 0.005 || this.ambientBass > 0.005 || this.ambientDrum > 0.005) {
         this.lastFrameTime = performance.now();
         this.animId = requestAnimationFrame(this.render);
       } else {
@@ -2086,9 +2247,9 @@
 
     freezeInPlace() {
       this.ambientBass = 0;
-      this.ambientMid = 0;
-      this.ambientTreble = 0;
-      this.ambientEnergy = 0;
+      this.ambientDrum = 0;
+      this.drumFloor = 0;
+      this.playbackBlend = 0;
       const backdrop = refs.ambientBackdrop;
       if (!backdrop) return;
       const t = this.flowTime;
@@ -2108,21 +2269,21 @@
 
       const orb1 = refs.ambientOrb1 || backdrop.querySelector(".ambient-orb-1");
       if (orb1) {
-        orb1.style.transform = `translate(-50%, -50%) translate(${flowX1.toFixed(1)}px, ${flowY1.toFixed(1)}px) scale(0.65)`;
+        orb1.style.transform = `translate(-50%, -50%) translate(${flowX1.toFixed(1)}px, ${flowY1.toFixed(1)}px) scale(0.68)`;
         orb1.style.opacity = "0.35";
         orb1.style.filter = "blur(65px)";
       }
 
       const orb2 = refs.ambientOrb2 || backdrop.querySelector(".ambient-orb-2");
       if (orb2) {
-        orb2.style.transform = `translate(-50%, -50%) translate(${flowX2.toFixed(1)}px, ${flowY2.toFixed(1)}px) scale(0.62)`;
+        orb2.style.transform = `translate(-50%, -50%) translate(${flowX2.toFixed(1)}px, ${flowY2.toFixed(1)}px) scale(0.65)`;
         orb2.style.opacity = "0.32";
         orb2.style.filter = "blur(65px)";
       }
 
       const orb3 = refs.ambientOrb3 || backdrop.querySelector(".ambient-orb-3");
       if (orb3) {
-        orb3.style.transform = `translate(-50%, -50%) translate(${flowX3.toFixed(1)}px, ${flowY3.toFixed(1)}px) scale(0.58)`;
+        orb3.style.transform = `translate(-50%, -50%) translate(${flowX3.toFixed(1)}px, ${flowY3.toFixed(1)}px) scale(0.61)`;
         orb3.style.opacity = "0.30";
       }
 
@@ -2184,12 +2345,20 @@
         if (this.timeData) this.analyser.getByteTimeDomainData(this.timeData);
       }
 
-      let rawBass = 0;
-      let rawMid = 0;
-      let rawTreble = 0;
-      let rawEnergy = 0;
       let hasActiveLevels = false;
       const binCount = this.freqData ? this.freqData.length : 0;
+      const binHz = this.audioCtx && this.analyser ? this.audioCtx.sampleRate / this.analyser.fftSize : 0;
+      const bandLevel = (minHz, maxHz) => {
+        if (!isPlaying || !binHz || !binCount) return 0;
+        const first = Math.max(1, Math.ceil(minHz / binHz));
+        const last = Math.min(binCount - 1, Math.floor(maxHz / binHz));
+        if (last < first) return 0;
+        let sum = 0;
+        for (let bin = first; bin <= last; bin++) sum += this.freqData[bin];
+        return sum / (last - first + 1) / 255;
+      };
+      const rawBass = bandLevel(35, 140);
+      const rawDrum = bandLevel(90, 320);
 
       // Radiant EQ Gradient: Warm gold/amber at base -> Coral -> Radiant magenta/peach top
       const barGrad = this.ctx.createLinearGradient(0, h, 0, 0);
@@ -2203,7 +2372,7 @@
         if (isPlaying && binCount > 0) {
           // Logarithmic perceptual grouping across 32 EQ frequency bands
           const minBin = 1;
-          const maxBin = Math.min(binCount - 2, 90);
+          const maxBin = Math.min(binCount - 2, Math.floor(12000 / binHz));
           const r0 = Math.pow(i / barCount, 2.0);
           const r1 = Math.pow((i + 1) / barCount, 2.0);
           const startBin = Math.max(0, Math.floor(minBin + r0 * (maxBin - minBin)));
@@ -2220,11 +2389,6 @@
           const boost = 1.0 + Math.pow(i / barCount, 1.25) * 1.6;
           eqEnergy = Math.min(1.0, avg * boost);
 
-          // Background orbs use pure raw acoustic frequencies without reverse loudness equalization
-          if (i < 8) rawBass += avg;
-          else if (i < 20) rawMid += avg;
-          else rawTreble += avg;
-          rawEnergy += avg;
         }
 
         const targetH = isPlaying ? Math.max(2, eqEnergy * (h - 2.5)) : 2;
@@ -2272,42 +2436,25 @@
         }
       }
 
-      // Pure raw acoustic normalization for ambient background animation
-      rawBass = rawBass / 8;
-      rawMid = rawMid / 12;
-      rawTreble = rawTreble / 12;
-      rawEnergy = rawEnergy / barCount;
-
-      // Asymmetrical Attack / Release envelope for a dynamic, dancing pump:
-      // Snaps open fast on beats, contracts cleanly between beats
-      const attack = 0.42;
-      const release = 0.14;
-
-      if (isPlaying) {
-        const bFactor = rawBass > this.ambientBass ? attack : release;
-        this.ambientBass += (rawBass - this.ambientBass) * bFactor;
-
-        const mFactor = rawMid > this.ambientMid ? attack : release;
-        this.ambientMid += (rawMid - this.ambientMid) * mFactor;
-
-        const tFactor = rawTreble > this.ambientTreble ? attack : release;
-        this.ambientTreble += (rawTreble - this.ambientTreble) * tFactor;
-
-        const eFactor = rawEnergy > this.ambientEnergy ? attack : release;
-        this.ambientEnergy += (rawEnergy - this.ambientEnergy) * eFactor;
-      } else {
-        this.ambientBass *= 0.85;
-        this.ambientMid *= 0.85;
-        this.ambientTreble *= 0.85;
-        this.ambientEnergy *= 0.85;
-      }
+      // Track the sustained low end separately from short kick and drum accents.
+      const floorFactor = 1 - Math.exp(-dt / 1.2);
+      this.drumFloor += ((isPlaying ? rawDrum : 0) - this.drumFloor) * floorFactor;
+      const bassTarget = isPlaying ? Math.pow(Math.min(1, Math.max(0, (rawBass - 0.04) / 0.72)), 1.15) : 0;
+      const drumAccent = Math.max(0, rawDrum - this.drumFloor);
+      const drumTarget = isPlaying ? Math.pow(Math.min(1, Math.max(0, (rawDrum * 0.82 + drumAccent * 1.1 - 0.035) / 0.75)), 1.15) : 0;
+      const bassTime = bassTarget > this.ambientBass ? 0.18 : 0.42;
+      const drumTime = drumTarget > this.ambientDrum ? 0.13 : 0.38;
+      this.ambientBass += (bassTarget - this.ambientBass) * (1 - Math.exp(-dt / bassTime));
+      this.ambientDrum += (drumTarget - this.ambientDrum) * (1 - Math.exp(-dt / drumTime));
+      const blendTarget = isPlaying ? 1 : 0;
+      this.playbackBlend += (blendTarget - this.playbackBlend) * (1 - Math.exp(-dt / (isPlaying ? 0.4 : 0.7)));
 
       // Dynamic Ambient BG animation synchronized with music spectrum & beats
       const backdrop = refs.ambientBackdrop;
       if (backdrop) {
         // Flow time advances ONLY while music is playing!
-        if (isPlaying) {
-          const flowSpeed = 0.35 + this.ambientBass * 0.50 + this.ambientEnergy * 0.25;
+        if (isPlaying && !this.reducedMotion?.matches) {
+          const flowSpeed = 0.35 + this.ambientBass * 0.28 + this.ambientDrum * 0.18;
           this.flowTime += dt * flowSpeed;
         }
 
@@ -2325,54 +2472,51 @@
         const flowX3 = (Math.sin(t * 0.54 + 4.3) * 0.30 + Math.cos(t * 0.28) * 0.14) * vw;
         const flowY3 = (Math.cos(t * 0.44 + 3.6) * 0.28 + Math.sin(t * 0.20) * 0.14) * vh;
 
-        // Dynamic contrast expansion: quiet moments contract down, loud hits burst open
-        const bassDynamic = Math.pow(Math.min(1.0, this.ambientBass * 1.6), 1.75);
-        const midDynamic = Math.pow(Math.min(1.0, this.ambientMid * 1.7), 1.75);
-        const energyDynamic = Math.pow(Math.min(1.0, this.ambientEnergy * 1.8), 1.85);
-        const trebleDynamic = Math.pow(Math.min(1.0, this.ambientTreble * 1.9), 1.75);
+        const motionAmount = this.reducedMotion?.matches ? 0.15 : 1;
+        const bassDynamic = Math.min(1, this.ambientBass) * this.playbackBlend * motionAmount;
+        const drumDynamic = Math.min(1, this.ambientDrum) * this.playbackBlend * motionAmount;
+        const lowDynamic = bassDynamic * 0.65 + drumDynamic * 0.35;
 
-        // Container scale pulse on bass hits
-        const bgScale = 0.98 + bassDynamic * 0.08;
+        // Keep the backdrop movement subtle so the low end has room to breathe.
+        const bgScale = 0.98 + bassDynamic * 0.06;
         backdrop.style.transform = `scale(${bgScale.toFixed(4)})`;
 
-        // Orb 1 (Deep Electric Violet / Purple): contracts to 0.65 on calm, swells to 1.45 on bass/808 hits!
+        // Violet follows the sustained bass and 808 range.
         const orb1 = refs.ambientOrb1 || backdrop.querySelector(".ambient-orb-1");
         if (orb1) {
-          const s1 = 0.65 + bassDynamic * 0.80;
-          const op1 = 0.35 + bassDynamic * 0.60;
+          const s1 = 0.68 + bassDynamic * 0.70;
+          const op1 = 0.35 + bassDynamic * 0.48;
           orb1.style.transform = `translate(-50%, -50%) translate(${flowX1.toFixed(1)}px, ${flowY1.toFixed(1)}px) scale(${s1.toFixed(3)})`;
           orb1.style.opacity = Math.min(0.98, op1).toFixed(3);
-          orb1.style.filter = `blur(${(65 + bassDynamic * 40).toFixed(0)}px)`;
         }
 
-        // Orb 2 (Amber Orange & Hot Magenta): contracts to 0.62, blooms to 1.40 on melody & mids!
+        // Amber follows the low drum attack.
         const orb2 = refs.ambientOrb2 || backdrop.querySelector(".ambient-orb-2");
         if (orb2) {
-          const s2 = 0.62 + midDynamic * 0.78;
-          const op2 = 0.32 + midDynamic * 0.62;
+          const s2 = 0.65 + drumDynamic * 0.70;
+          const op2 = 0.32 + drumDynamic * 0.46;
           orb2.style.transform = `translate(-50%, -50%) translate(${flowX2.toFixed(1)}px, ${flowY2.toFixed(1)}px) scale(${s2.toFixed(3)})`;
           orb2.style.opacity = Math.min(0.98, op2).toFixed(3);
-          orb2.style.filter = `blur(${(65 + midDynamic * 40).toFixed(0)}px)`;
         }
 
-        // Orb 3 (Artwork Color Bloom): contracts to 0.58, bursts to 1.36 on volume swells!
+        // The artwork color follows a quieter blend of both low bands.
         const orb3 = refs.ambientOrb3 || backdrop.querySelector(".ambient-orb-3");
         if (orb3) {
-          const s3 = 0.58 + energyDynamic * 0.78;
-          const op3 = 0.30 + energyDynamic * 0.65;
+          const s3 = 0.61 + lowDynamic * 0.62;
+          const op3 = 0.30 + lowDynamic * 0.40;
           orb3.style.transform = `translate(-50%, -50%) translate(${flowX3.toFixed(1)}px, ${flowY3.toFixed(1)}px) scale(${s3.toFixed(3)})`;
           orb3.style.opacity = Math.min(0.95, op3).toFixed(3);
         }
 
-        // Sparkle / Film Grain layer reacts dynamically to treble transients (hi-hats, shimmer)
+        // Grain stays subdued, with a small accent on drum hits.
         const grain = refs.ambientGrain || backdrop.querySelector(".ambient-grain");
         if (grain) {
-          const grainOp = 0.25 + trebleDynamic * 0.65;
+          const grainOp = 0.25 + drumDynamic * 0.08;
           grain.style.opacity = Math.min(0.90, grainOp).toFixed(3);
         }
       }
 
-      if (isPlaying || hasActiveLevels || this.ambientEnergy > 0.005) {
+      if (isPlaying || hasActiveLevels || this.playbackBlend > 0.005 || this.ambientBass > 0.005 || this.ambientDrum > 0.005) {
         this.animId = requestAnimationFrame(this.render);
       } else {
         this.animId = null;
@@ -2461,35 +2605,18 @@
       const job = state.queue.running.find((item) => item.id === id);
       if (!job) return;
       job.progress = progress;
-      const display = this.progressDisplay(progress);
       for (const container of [refs.queuePipRunningBox, refs.queuePageRunning]) {
         if (!container) continue;
         const card = Array.from(container.querySelectorAll("[data-job-id]"))
           .find((candidate) => candidate.dataset.jobId === id);
         if (!card) continue;
-        $(".queue-progress-bar-fill", card).style.width = `${display.pct}%`;
-        $(".queue-progress-status span", card).textContent = display.status;
-        $(".queue-progress-status strong", card).textContent = display.label;
+        const section = $(".generation-progress", card);
+        if (section) updateGenerationProgress(section, job.mode, progress);
       }
     },
 
-    progressDisplay(progress = {}) {
-      const current = Math.max(0, Number(progress.current) || 0);
-      const total = Number(progress.total) || 100;
-      const pct = total > 0 ? Math.min(100, (current / total) * 100) : 0;
-      const phaseNames = {
-        abc: "가사/악곡 계획 및 기보 생성",
-        music: "보컬 & 멜로디 오디오 생성",
-        rendering: "오디오 고음질 렌더링",
-        finishing: "결과 파일 인코딩 및 저장",
-        preparing: "엔진 준비 중"
-      };
-      const phaseText = phaseNames[progress.phase] || "생성 진행 중...";
-      const rateText = progress.rate ? ` · ${progress.rate} tok/s` : "";
-      return { pct, label: `${Math.round(pct)}%`, status: `${phaseText}${rateText}` };
-    },
-
     async poll() {
+      if (!window.yue2Auth?.ready) return;
       const requestId = ++this.requestId;
       try {
         const data = await fetchJson("/api/queue");
@@ -2604,10 +2731,12 @@
       // 9. Synchronize Dedicated Queue Page (if open or present)
       if (refs.queuePagePendingCount) refs.queuePagePendingCount.textContent = String(pendingCount);
       if (refs.queuePageEngineStatus) {
-        refs.queuePageEngineStatus.textContent = engine.status === "busy" ? "GPU 엔진 생성 가동 중" : engine.status === "idle" ? "GPU 엔진 대기 중 (즉시 생성 가능)" : "GPU 엔진 오프라인";
+        refs.queuePageEngineStatus.textContent = engine.status === "busy" ? "음악을 만들고 있습니다" : "지금은 음악을 만들 수 없습니다";
       }
+      if (refs.queuePageBannerLeft) refs.queuePageBannerLeft.hidden = engine.status === "idle";
+      if (refs.queuePageCreate) refs.queuePageCreate.hidden = engine.status !== "idle";
       if (refs.queuePageGpu) {
-        refs.queuePageGpu.textContent = engine.device ? `${engine.device} ${engine.vram ? '· ' + engine.vram : ''}` : "";
+        refs.queuePageGpu.textContent = "";
       }
       if (refs.queuePageRunning) {
         refs.queuePageRunning.innerHTML = "";
@@ -2643,7 +2772,6 @@
 
     createRunningCard(job) {
       const modeLabel = job.mode === "cover" ? "커버" : "새 곡";
-      const display = this.progressDisplay(job.progress || {});
 
       const card = element("div", { className: "queue-item-card is-active-gen", attrs: { "data-job-id": job.id } }, [
         element("div", { className: "queue-item-top" }, [
@@ -2657,13 +2785,7 @@
           }),
           element("span", { text: `· ${formatRelative(job.created_at || job.createdAt)}` })
         ]),
-        element("div", { className: "queue-progress-bar-wrap" }, [
-          element("div", { className: "queue-progress-bar-fill", style: `width: ${display.pct}%` })
-        ]),
-        element("div", { className: "queue-progress-status" }, [
-          element("span", { text: display.status }),
-          element("strong", { text: display.label })
-        ])
+        createGenerationProgress(job.mode, job.progress, "queue-generation-progress")
       ]);
       return card;
     },
@@ -2767,8 +2889,12 @@
       refs.publishPreview.style.backgroundImage = state.publishPreviewUrl ? `url("${state.publishPreviewUrl}")` : "";
       refs.publishPreview.classList.toggle("has-custom-cover", Boolean(state.publishPreviewUrl));
     });
-    refs.composerForm.addEventListener("input", saveComposer);
-    refs.composerForm.addEventListener("change", saveComposer);
+    const trackComposerEdit = () => {
+      if (!window.yue2Auth?.ready) guestComposerTouched = true;
+      saveComposer();
+    };
+    refs.composerForm.addEventListener("input", trackComposerEdit);
+    refs.composerForm.addEventListener("change", trackComposerEdit);
     refs.advancedPanel.addEventListener("toggle", saveComposer);
     window.addEventListener("pagehide", saveComposer);
     refs.workspaceSearch.addEventListener("input", renderJobs);
@@ -2879,8 +3005,6 @@
     syncSeedState();
     syncPlanState();
     setInstrumental(false);
-    restoreComposer();
-    composerPersistenceReady = true;
     promptAssistant = window.YuE2PromptAssistant?.init({
       getMode: () => state.mode,
       isInstrumental: () => state.instrumental,
@@ -2896,9 +3020,19 @@
       }
     });
     bindEvents();
-    setupJobsInfiniteScroll();
     renderJobs();
     renderRoute();
+  }
+
+  function startSignedIn() {
+    if (signedInStarted) return;
+    signedInStarted = true;
+    document.body.classList.add("is-authenticated");
+    renderRoute();
+    if (!guestComposerTouched) restoreComposer();
+    composerPersistenceReady = true;
+    if (guestComposerTouched) saveComposer();
+    setupJobsInfiniteScroll();
     checkHealth();
     window.setInterval(checkHealth, 15000);
     QueueManager.init();
@@ -2906,6 +3040,7 @@
     Realtime.start();
   }
 
-  if (window.yue2Auth?.ready) init();
-  else window.addEventListener("yue2-ready", init, { once: true });
+  init();
+  if (window.yue2Auth?.ready) startSignedIn();
+  else window.addEventListener("yue2-ready", startSignedIn, { once: true });
 })();

@@ -2,13 +2,15 @@
   "use strict";
 
   const auth = window.yue2Auth = { ready: false, csrfToken: "", user: null };
-  const gate = document.createElement("div");
+  const gate = document.createElement("dialog");
   gate.className = "auth-gate";
+  gate.setAttribute("aria-labelledby", "auth-title");
+  gate.setAttribute("aria-describedby", "auth-description");
   gate.innerHTML = `
     <form class="auth-card" id="auth-form">
-      <p class="auth-eyebrow">YUE STUDIO · CLUB</p>
+      <button class="auth-close" type="button" aria-label="로그인 창 닫기">×</button>
       <h1 id="auth-title">동아리 로그인</h1>
-      <p class="auth-description">초대 코드로 즉시 가입하여 동아리원들과 작업할 수 있습니다.</p>
+      <p class="auth-description" id="auth-description">음악을 만들려면 로그인하거나 초대 코드로 가입해 주세요.</p>
       <label class="auth-name-field" hidden>표시 이름<input name="display_name" autocomplete="name" maxlength="40"></label>
       <label class="auth-invite-field" hidden>초대 코드<input name="invite_code" autocomplete="off" placeholder="초대 코드 입력" maxlength="32"></label>
       <label class="auth-code-field" hidden>서버 창의 설정 코드<input name="setup_code" autocomplete="off"></label>
@@ -28,8 +30,50 @@
   const title = gate.querySelector("#auth-title");
   const submit = gate.querySelector(".auth-submit");
   const switchButton = gate.querySelector(".auth-switch");
+  const closeButton = gate.querySelector(".auth-close");
   let registering = false;
   let settingUp = false;
+  let authChecked = false;
+  let promptRequested = false;
+  let restoringPromptFocus = false;
+
+  function openAuth() {
+    if (auth.ready) return;
+    if (!authChecked) {
+      promptRequested = true;
+      return;
+    }
+    if (gate.open) return;
+    showError("");
+    gate.showModal();
+    window.requestAnimationFrame(() => {
+      if (gate.open) form.elements.username.focus();
+    });
+  }
+
+  auth.open = openAuth;
+  closeButton.addEventListener("click", () => gate.close());
+  gate.addEventListener("close", () => {
+    restoringPromptFocus = true;
+    window.setTimeout(() => { restoringPromptFocus = false; }, 0);
+  });
+  gate.addEventListener("click", (event) => {
+    if (event.target === gate) gate.close();
+  });
+  function requestAuth() {
+    if (auth.ready || restoringPromptFocus) return;
+    openAuth();
+  }
+  document.querySelectorAll("#prompt-idea, #lyrics-input, #style-input").forEach((input) => {
+    input.addEventListener("pointerdown", requestAuth);
+    input.addEventListener("focus", requestAuth);
+  });
+  document.querySelector("#composer-form")?.addEventListener("submit", (event) => {
+    if (auth.ready) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    requestAuth();
+  }, true);
 
   function showError(message) {
     errorNode.textContent = message;
@@ -53,16 +97,19 @@
       ...options,
       headers: { ...(options.headers || {}), ...(auth.csrfToken ? { "X-Yue2-CSRF": auth.csrfToken } : {}) }
     });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error || "요청을 처리하지 못했습니다.");
-    return body;
+    if (!response.ok) {
+      const error = new Error("요청을 처리하지 못했습니다.");
+      error.status = response.status;
+      throw error;
+    }
+    return response.json();
   }
 
   function activate(result) {
     auth.user = result.user;
     auth.csrfToken = result.csrf_token;
     auth.ready = true;
-    gate.hidden = true;
+    if (gate.open) gate.close();
     const profile = document.querySelector(".sidebar-footer .profile");
     if (profile) {
       profile.replaceChildren();
@@ -128,7 +175,7 @@
       const createForm = document.createElement("div");
       createForm.className = "auth-new-invite";
       const noteInput = document.createElement("input");
-      noteInput.placeholder = "메모 (선택)";
+      noteInput.placeholder = "누구에게 줄 코드인가요?";
       noteInput.setAttribute("aria-label", "초대 코드 메모 (선택)");
       noteInput.maxLength = 30;
       const usesInput = document.createElement("input");
@@ -138,6 +185,12 @@
       usesInput.max = "100";
       usesInput.title = "사용 가능 횟수";
       usesInput.setAttribute("aria-label", "사용 가능 횟수");
+      const noteLabel = document.createElement("label");
+      noteLabel.textContent = "메모 (선택)";
+      noteLabel.append(noteInput);
+      const usesLabel = document.createElement("label");
+      usesLabel.textContent = "사용 가능 횟수";
+      usesLabel.append(usesInput);
       const createBtn = document.createElement("button");
       createBtn.type = "button";
       createBtn.textContent = "+ 발급";
@@ -153,12 +206,12 @@
           noteInput.value = "";
           await loadInvites();
         } catch (error) {
-          alert(error.message);
+          alert("초대 코드를 발급하지 못했습니다. 다시 시도해 주세요.");
         } finally {
           createBtn.disabled = false;
         }
       });
-      createForm.append(noteInput, usesInput, createBtn);
+      createForm.append(noteLabel, usesLabel, createBtn);
 
       const list = document.createElement("div");
       list.className = "auth-invite-list";
@@ -224,7 +277,7 @@
         await loadInvites();
         content.querySelector(".auth-new-invite input")?.focus();
       } catch (error) {
-        alert(error.message);
+        alert("초대 코드를 불러오지 못했습니다. 다시 시도해 주세요.");
         panel.close();
       }
     });
@@ -258,7 +311,16 @@
         throw new Error("로그인 상태를 유지할 수 없습니다. 브라우저 쿠키와 접속 주소를 확인하세요.");
       }
       activate(result);
-    } catch (error) { showError(error.message); }
+    } catch (error) {
+      const message = error.status === 401 ? "아이디 또는 비밀번호를 확인하세요."
+        : error.status === 403 && !registering && !settingUp ? "관리자 승인을 기다리는 계정입니다."
+        : error.status === 403 && settingUp ? "설정 코드를 확인하세요."
+        : error.status === 400 && registering ? "입력 내용과 초대 코드를 확인하세요."
+        : error.status === 400 ? "입력 내용을 확인하세요."
+        : error.status === 409 ? "설정이 변경되었습니다. 화면을 새로고침해 주세요."
+        : "처리하지 못했습니다. 잠시 후 다시 시도해 주세요.";
+      showError(message);
+    }
     finally { submit.disabled = false; }
   });
 
@@ -267,18 +329,17 @@
       activate(result);
       return;
     }
-    return showLoginGate();
-  }).catch(showLoginGate);
+    return prepareGuest();
+  }).catch(prepareGuest);
 
-  async function showLoginGate() {
+  async function prepareGuest() {
     if (auth.ready) return;
-    gate.hidden = false;
     try {
       const status = await api("/api/auth/setup-status");
       if (status.required) {
         settingUp = true;
         title.textContent = "최초 관리자 설정";
-        gate.querySelector(".auth-description").textContent = "서버 창에 표시된 설정 코드를 입력하고 관리자 계정을 만드세요.";
+        gate.querySelector(".auth-description").textContent = "서버 창의 설정 코드를 입력해 관리자 계정을 만드세요.";
         nameField.hidden = false;
         inviteField.hidden = true;
         codeField.hidden = false;
@@ -287,6 +348,8 @@
         form.elements.password.autocomplete = "new-password";
         form.elements.password.minLength = 12;
       }
-    } catch { showError("서버에 연결할 수 없습니다."); }
+    } catch { showError("서비스에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요."); }
+    authChecked = true;
+    if (promptRequested) openAuth();
   }
 })();

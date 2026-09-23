@@ -31,9 +31,14 @@ class FakeStream:
     def __init__(self, data: bytes):
         self.content = self
         self.data = data
+        self.status = 200
+        self.headers = {"Content-Type": "audio/mpeg"}
 
     async def read(self, amount: int):
         return self.data[:amount]
+
+    async def iter_chunked(self, amount: int):
+        yield self.data
 
     def release(self):
         pass
@@ -84,6 +89,34 @@ class LibraryEcosystemTests(unittest.IsolatedAsyncioTestCase):
         for name, value in fields.items():
             form.add_field(name, value, content_type="text/plain")
         return form
+
+    async def test_guests_can_browse_only_published_library(self):
+        album_response = await self.client.post(
+            "/api/albums", data=self.form(title="Open album"), headers={"X-Yue2-CSRF": self.csrf})
+        album_id = (await album_response.json())["id"]
+        published = await self.client.post(
+            "/api/tracks/song-1/publish", data=self.form(title="Open song", album_id=album_id),
+            headers={"X-Yue2-CSRF": self.csrf})
+        self.assertEqual(published.status, 200)
+        self.client.session.cookie_jar.clear()
+
+        for path in ("/api/library", "/api/library/discover", "/api/library/charts",
+                     "/api/library/tracks/song-1", f"/api/artists/{self.admin.id}",
+                     f"/api/albums/{album_id}", "/api/tracks/song-1/audio"):
+            response = await self.client.get(path)
+            self.assertEqual(response.status, 200, path)
+            await response.read()
+        detail = await (await self.client.get(f"/api/artists/{self.admin.id}")).json()
+        self.assertFalse(detail["is_mine"])
+        self.assertEqual([track["title"] for track in detail["tracks"]], ["Open song"])
+
+        self.assertEqual((await self.client.get("/api/jobs")).status, 401)
+        self.assertEqual((await self.client.get("/api/artists/mine")).status, 401)
+        self.assertEqual((await self.client.get("/api/albums?mine=1")).status, 401)
+        self.assertEqual((await self.client.post("/api/tracks/song-1/play")).status, 401)
+        self.repo.unpublish("song-1", self.admin.id)
+        self.assertEqual((await self.client.get("/api/library/tracks/song-1")).status, 404)
+        self.assertEqual((await self.client.get("/api/tracks/song-1/audio")).status, 404)
 
     async def test_artist_album_single_chart_and_remix(self):
         self.assertEqual(await (await self.client.get("/api/library")).json(), [])

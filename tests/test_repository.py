@@ -193,6 +193,20 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(len(limited), 2)
         self.assertEqual([item.id for item in limited], ["job-09", "job-08"])
 
+    def test_charts_default_to_top_100(self) -> None:
+        for index in range(101):
+            self._create(f"chart-{index:03d}")
+        with sqlite3.connect(self.repo.path) as db:
+            db.executemany(
+                "UPDATE jobs SET play_count = ? WHERE id = ?",
+                [(index, f"chart-{index:03d}") for index in range(101)],
+            )
+
+        charts = self.repo.list_charts()
+        self.assertEqual(len(charts), 100)
+        self.assertEqual(charts[0].id, "chart-100")
+        self.assertEqual(charts[-1].id, "chart-001")
+
     def test_existing_library_adds_creator_fields_without_losing_tracks(self) -> None:
         old_db = Path(self._tempdir.name) / "old.sqlite3"
         with sqlite3.connect(old_db) as db:

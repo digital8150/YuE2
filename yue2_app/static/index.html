@@ -33,6 +33,8 @@
       <symbol id="icon-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></symbol>
       <symbol id="icon-close" viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17"/></symbol>
       <symbol id="icon-play" viewBox="0 0 24 24"><path d="m9 5 11 7-11 7Z"/></symbol>
+      <symbol id="icon-shuffle" viewBox="0 0 24 24"><path d="M4 6h2c5 0 7 12 12 12h2M17 15l3 3-3 3M4 18h2c2 0 3-2 4-4M14 9c1-2 2-3 4-3h2M17 3l3 3-3 3"/></symbol>
+      <symbol id="icon-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
       <symbol id="icon-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
       <symbol id="icon-prev" viewBox="0 0 24 24"><path d="M5 5v14M19 5 8 12l11 7Z"/></symbol>
       <symbol id="icon-next" viewBox="0 0 24 24"><path d="M19 5v14M5 5l11 7-11 7Z"/></symbol>
@@ -67,17 +69,17 @@
             <svg class="nav-icon" aria-hidden="true"><use href="#icon-library"></use></svg>
             <span>라이브러리</span>
           </a>
-          <a class="nav-link" href="#queue" data-view-link="queue" id="nav-queue-link" aria-label="서버 대기열">
+          <a class="nav-link" href="#queue" data-view-link="queue" id="nav-queue-link" aria-label="대기열">
             <svg class="nav-icon" aria-hidden="true"><use href="#icon-queue"></use></svg>
-            <span>서버 대기열</span>
+            <span>대기열</span>
             <span class="nav-queue-badge" id="nav-queue-badge" hidden>0</span>
           </a>
-          <a class="nav-link" href="#backoffice" data-view-link="backoffice" aria-label="아티스트 백오피스"><svg class="nav-icon" aria-hidden="true"><use href="#icon-person"></use></svg><span>백오피스</span></a>
+          <a class="nav-link" href="#backoffice" data-view-link="backoffice" aria-label="아티스트 관리"><svg class="nav-icon" aria-hidden="true"><use href="#icon-person"></use></svg><span>아티스트 관리</span></a>
         </nav>
 
         <div class="sidebar-footer">
-          <div class="profile"><span class="profile-avatar">Y</span><span>내 스튜디오<small>음악이 시작되는 곳</small></span></div>
-          <div class="connection-status" id="connection-status" aria-live="polite">
+          <div class="profile"><span class="profile-avatar">Y</span><span>내 스튜디오</span></div>
+          <div class="connection-status" id="connection-status" aria-live="polite" hidden>
             <svg class="status-icon" aria-hidden="true"><use href="#icon-check"></use></svg>
             <span class="connection-label">연결 확인 중</span>
           </div>
@@ -89,7 +91,7 @@
           <svg class="brand-symbol" aria-hidden="true"><use href="#icon-wave"></use></svg>
           <span class="brand-word">YUE Studio</span>
         </a>
-        <div class="connection-status connection-status-compact" id="mobile-connection-status" aria-live="polite">
+        <div class="connection-status connection-status-compact" id="mobile-connection-status" aria-live="polite" hidden>
           <svg class="status-icon" aria-hidden="true"><use href="#icon-check"></use></svg>
           <span class="connection-label">연결 확인 중</span>
         </div>
@@ -121,19 +123,12 @@
                     </span>
                   </button>
                 </fieldset>
-                <span class="model-label">YuE 2 <span class="model-dot" aria-hidden="true"></span></span>
                 </div>
 
                 <div class="form-stack">
-                  <section class="prompt-assistant" aria-labelledby="prompt-assistant-title">
-                    <div class="prompt-assistant-heading">
-                      <div>
-                        <h2 id="prompt-assistant-title">아이디어로 프롬프트 만들기</h2>
-                        <p>Chrome 기기 내 AI가 곡 제목과 YuE2 형식의 스타일·가사 초안을 만듭니다.</p>
-                      </div>
-                      <span class="prompt-assistant-badge">기기 내 AI</span>
-                    </div>
-                    <label class="sr-only" for="prompt-idea">곡 아이디어</label>
+                  <section class="prompt-assistant" id="prompt-assistant" aria-labelledby="prompt-assistant-title">
+                    <div class="prompt-assistant-heading"><h2 id="prompt-assistant-title">아이디어로 초안 만들기</h2></div>
+                    <label class="field-label" for="prompt-idea">곡 아이디어</label>
                     <textarea class="text-area prompt-idea" id="prompt-idea" rows="3" maxlength="1500" placeholder="예: 비 오는 서울 밤거리의 그리움을 담은 느린 인디 팝. 여성 보컬, 피아노와 잔잔한 드럼"></textarea>
                     <div class="prompt-assistant-actions">
                       <label for="prompt-language">가사 언어</label>
@@ -143,7 +138,7 @@
                       </select>
                       <button id="prompt-generate" type="button" disabled>초안 만들기</button>
                     </div>
-                    <p class="prompt-assistant-status" id="prompt-status" role="status" aria-live="polite">Chrome AI 지원 여부를 확인하고 있습니다.</p>
+                    <p class="prompt-assistant-status" id="prompt-status" role="status" aria-live="polite" hidden></p>
                     <div class="prompt-assistant-result" id="prompt-result" hidden>
                       <strong>생성된 초안</strong>
                       <div class="prompt-assistant-preview" tabindex="0" aria-label="생성된 곡 제목, 스타일과 가사">
@@ -184,7 +179,7 @@
                       </button>
                     </div>
                     <textarea class="text-area lyrics-area" id="lyrics-input" name="lyrics" rows="8" maxlength="6000" placeholder="어떤 이야기를 노래할까요?&#10;&#10;가사를 입력하거나, 연주곡으로 만들어 보세요."></textarea>
-                    <div class="editor-foot"><span>YOUR WORDS, YOUR MUSIC</span><span id="lyrics-count">0 / 6,000</span></div>
+                    <div class="editor-foot"><span id="lyrics-count">0 / 6,000</span></div>
                   </div>
 
                   <div class="field-group style-group editor-block">
@@ -202,7 +197,6 @@
                   <div class="title-block editor-block">
                     <label class="field-label" for="track-title"><svg class="label-icon" aria-hidden="true"><use href="#icon-title"></use></svg><span>곡 제목</span><span class="optional">선택</span></label>
                     <input class="text-input" id="track-title" name="title" type="text" maxlength="120" autocomplete="off" placeholder="이 음악의 이름은…" />
-                    <div class="save-destination"><svg class="icon" aria-hidden="true"><use href="#icon-library"></use></svg><span>저장 위치</span><span class="destination-pill">내 스튜디오 · 공개는 나중에</span></div>
                   </div>
 
                 </div>
@@ -215,7 +209,6 @@
                     <div class="advanced-section">
                       <div class="advanced-section-header">
                         <span class="advanced-section-title">기본 생성 설정</span>
-                        <span class="advanced-section-desc">곡의 재생 길이 및 난수 시드를 설정합니다</span>
                       </div>
                       <div class="advanced-grid">
                         <div class="field-group">
@@ -229,7 +222,6 @@
                         <div class="field-group seed-group">
                           <div class="field-label-row">
                             <label class="field-label" for="seed-input">시드</label>
-                            <span class="field-meta">Seed</span>
                           </div>
                           <div class="seed-row">
                             <input class="text-input" id="seed-input" name="seed" type="number" step="1" placeholder="자동" disabled />
@@ -244,24 +236,23 @@
 
                     <div class="advanced-section">
                       <div class="advanced-section-header">
-                        <span class="advanced-section-title">오디오 생성 모델</span>
-                        <span class="advanced-section-desc">음질과 멜로디의 표현력·다양성을 조절합니다</span>
+                        <span class="advanced-section-title">세부 조정</span>
                       </div>
                       <div class="advanced-grid">
                         <div class="field-group">
-                          <label class="field-label" for="temperature-input">온도 · Temperature</label>
+                          <label class="field-label" for="temperature-input">변화 강도</label>
                           <input class="text-input" id="temperature-input" name="temperature" type="number" min="0" max="5" step="0.01" value="1" />
                         </div>
                         <div class="field-group">
-                          <label class="field-label" for="top-p-input">다양성 · Top P</label>
+                          <label class="field-label" for="top-p-input">다양성</label>
                           <input class="text-input" id="top-p-input" name="top_p" type="number" min="0.01" max="1" step="0.01" value="0.95" />
                         </div>
                         <div class="field-group">
-                          <label class="field-label" for="top-k-input">선택 폭 · Top K</label>
+                          <label class="field-label" for="top-k-input">선택 폭</label>
                           <input class="text-input" id="top-k-input" name="top_k" type="number" min="1" max="32768" step="1" value="100" />
                         </div>
                         <div class="field-group">
-                          <label class="field-label" for="repetition-input">반복 억제 · Repetition</label>
+                          <label class="field-label" for="repetition-input">반복 억제</label>
                           <input class="text-input" id="repetition-input" name="repetition_penalty" type="number" min="0.01" max="10" step="0.001" value="1.2" />
                         </div>
                       </div>
@@ -271,7 +262,6 @@
                       <div class="plan-heading">
                         <div class="plan-title-wrap">
                           <h4 class="plan-title">악곡 구성 계획</h4>
-                          <p class="plan-desc">음악 생성 전 멜로디와 전체 곡 구조를 먼저 설계합니다</p>
                         </div>
                         <button class="toggle-control is-on" id="plan-toggle" type="button" role="switch" aria-checked="true">
                           <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
@@ -280,25 +270,24 @@
                       </div>
                       <div class="plan-grid" id="plan-fields">
                         <div class="field-group">
-                          <label class="field-label" for="plan-temperature-input">계획 온도 · Temperature</label>
+                          <label class="field-label" for="plan-temperature-input">구성 변화 강도</label>
                           <input class="text-input" id="plan-temperature-input" name="plan_temperature" type="number" min="0" max="5" step="0.01" value="0.7" />
                         </div>
                         <div class="field-group">
-                          <label class="field-label" for="plan-top-p-input">계획 다양성 · Top P</label>
+                          <label class="field-label" for="plan-top-p-input">구성 다양성</label>
                           <input class="text-input" id="plan-top-p-input" name="plan_top_p" type="number" min="0.01" max="1" step="0.01" value="0.9" />
                         </div>
                         <div class="field-group">
-                          <label class="field-label" for="plan-top-k-input">계획 선택 폭 · Top K</label>
+                          <label class="field-label" for="plan-top-k-input">구성 선택 폭</label>
                           <input class="text-input" id="plan-top-k-input" name="plan_top_k" type="number" min="1" max="32768" step="1" value="30" />
                         </div>
                         <div class="field-group">
-                          <label class="field-label" for="plan-repetition-input">계획 반복 억제 · Repetition</label>
+                          <label class="field-label" for="plan-repetition-input">구성 반복 억제</label>
                           <input class="text-input" id="plan-repetition-input" name="plan_repetition_penalty" type="number" min="0.01" max="10" step="0.001" value="1.005" />
                         </div>
                         <div class="field-group field-group-full">
                           <div class="field-label-row">
-                            <label class="field-label" for="penalty-window-input">반복 확인 범위 · Window</label>
-                            <span class="field-meta">토큰 단위</span>
+                            <label class="field-label" for="penalty-window-input">반복 확인 범위</label>
                           </div>
                           <input class="text-input" id="penalty-window-input" name="penalty_window" type="number" min="1" max="20000" step="1" value="100" />
                         </div>
@@ -323,12 +312,13 @@
                     <span class="submit-label">음악 생성하기</span>
                     <span class="suno-sparkle-texture" aria-hidden="true"></span>
                   </button>
+                  <p class="submit-privacy">생성한 곡은 직접 공개하기 전까지 내 스튜디오에서만 볼 수 있습니다.</p>
                 </div>
               </form>
 
               <aside class="jobs-panel" aria-labelledby="jobs-title">
                 <div class="panel-heading">
-                  <h2 id="jobs-title"><span class="breadcrumb-parent">작업 공간</span><span class="breadcrumb-separator">/</span>내 스튜디오</h2>
+                  <h2 id="jobs-title">내 스튜디오</h2>
                   <a class="panel-library-link" href="#library" data-view-link="library">
                     <svg class="icon" aria-hidden="true"><use href="#icon-library"></use></svg>
                     <span>라이브러리</span>
@@ -339,7 +329,7 @@
                   <select id="workspace-filter" aria-label="작업 상태 필터"><option value="all">모든 작업</option><option value="active">생성 중</option><option value="completed">완료</option><option value="failed">실패</option></select>
                   <button class="toolbar-button" id="refresh-jobs" type="button" aria-label="작업 새로고침"><svg class="icon" aria-hidden="true"><use href="#icon-cover"></use></svg></button>
                 </div>
-                <div class="workspace-caption"><span>최근 작업</span><span id="jobs-count">0곡</span></div>
+                <div class="workspace-caption"><span id="jobs-count">0곡</span></div>
                 <div class="jobs-list" id="jobs-list" aria-live="polite">
                   <div class="jobs-loading" aria-hidden="true">
                     <span class="skeleton-line skeleton-line-wide"></span>
@@ -364,17 +354,16 @@
 
           <section class="view-panel" id="library-view" data-view-panel="library" aria-labelledby="library-title" hidden>
             <div class="page-heading page-heading-library">
-              <div><p class="eyebrow">SHARED MUSIC</p><h1 id="library-title">라이브러리</h1><p class="page-description">창작자가 공개한 음악을 듣고, 생성 설정을 내 스튜디오로 가져오세요.</p></div>
+              <div><h1 id="library-title">홈</h1><p class="page-description" id="library-description">공개된 음악을 만나보세요.</p></div>
             </div>
 
-            <nav class="library-tabs" aria-label="라이브러리 탐색"><a href="#library" data-library-tab="discover">둘러보기</a><a href="#library?view=charts" data-library-tab="charts">차트</a><a href="#library?view=all" data-library-tab="all">모든 음악</a></nav>
-            <div id="library-content" class="library-content" aria-live="polite"></div>
+            <nav class="library-tabs" aria-label="라이브러리 탐색"><a href="#library" data-library-tab="discover">홈</a><a href="#library?view=new" data-library-tab="new">새로운 음악</a><a href="#library?view=charts" data-library-tab="charts">차트</a><a href="#library?view=all" data-library-tab="all">검색</a></nav>
 
             <div class="library-toolbar" id="library-toolbar" hidden>
               <label class="search-box" for="library-search">
                 <svg class="search-icon" aria-hidden="true"><use href="#icon-search"></use></svg>
                 <span class="sr-only">음악 검색</span>
-                <input id="library-search" type="search" autocomplete="off" placeholder="제목이나 스타일 검색" />
+                <input id="library-search" type="search" autocomplete="off" placeholder="노래, 앨범, 아티스트 검색" />
                 <button class="clear-search" id="clear-search" type="button" aria-label="검색어 지우기" hidden>×</button>
               </label>
               <div class="filter-group" role="group" aria-label="음악 종류 필터">
@@ -390,20 +379,16 @@
               <div class="track-skeleton" aria-hidden="true"></div>
               <div class="track-skeleton" aria-hidden="true"></div>
             </div>
+            <div id="library-content" class="library-content" aria-live="polite"></div>
           </section>
 
           <section class="view-panel" id="queue-view" data-view-panel="queue" aria-labelledby="queue-view-title" hidden>
             <div class="page-heading page-heading-queue">
               <div>
-                <p class="eyebrow">SERVER WORKSPACE MONITOR</p>
-                <h1 id="queue-view-title">서버 전체 대기열</h1>
-                <p class="page-description">모든 사용자의 생성 요청 진행 상황과 엔진 상태를 실시간으로 모니터링합니다.</p>
+                <h1 id="queue-view-title">대기열</h1>
+                <p class="page-description">지금 만드는 곡과 대기 순서를 확인하세요.</p>
               </div>
               <div class="queue-page-actions">
-                <button class="queue-action-pill" id="queue-page-open-pip" type="button">
-                  <svg class="icon" aria-hidden="true"><use href="#icon-pip"></use></svg>
-                  <span>PIP 플로팅 창으로 전환</span>
-                </button>
                 <button class="queue-action-pill" id="queue-page-refresh" type="button">
                   <svg class="icon" aria-hidden="true"><use href="#icon-reset"></use></svg>
                   <span>새로고침</span>
@@ -418,18 +403,18 @@
                     <span class="queue-banner-pulse" aria-hidden="true"></span>
                     <span class="queue-banner-status" id="queue-page-engine-status">엔진 상태 확인 중</span>
                   </div>
-                  <div class="queue-banner-gpu" id="queue-page-gpu"></div>
+                  <a class="queue-create-link" id="queue-page-create" href="#create">새 곡 만들기</a>
                 </div>
 
                 <div class="queue-card-group">
-                  <h3 class="queue-group-title"><span class="queue-live-tag">LIVE</span> 현재 생성 중인 작업</h3>
+                  <h2 class="queue-group-title">생성 중</h2>
                   <div class="queue-page-running-slot" id="queue-page-running">
                     <!-- Populated dynamically -->
                   </div>
                 </div>
 
                 <div class="queue-card-group">
-                  <h3 class="queue-group-title">대기 순서 (<span id="queue-page-pending-count">0</span>건 대기 중)</h3>
+                  <h2 class="queue-group-title">대기 순서 <span id="queue-page-pending-count">0</span></h2>
                   <div class="queue-page-pending-slot" id="queue-page-pending">
                     <!-- Populated dynamically -->
                   </div>
@@ -437,7 +422,7 @@
               </div>
 
               <aside class="queue-view-aside">
-                <h3 class="queue-group-title">최근 생성된 음악</h3>
+                <h2 class="queue-group-title">최근 완성된 곡</h2>
                 <div class="queue-page-recent-slot" id="queue-page-recent">
                   <!-- Populated dynamically -->
                 </div>
@@ -446,7 +431,7 @@
           </section>
           <section class="view-panel" id="backoffice-view" data-view-panel="backoffice" aria-labelledby="backoffice-title" hidden>
             <div class="page-heading">
-              <div><p class="eyebrow">ARTIST BACK OFFICE</p><h1 id="backoffice-title">아티스트 백오피스</h1><p class="page-description">가상명의 아티스트와 앨범을 관리합니다.</p></div>
+              <div><h1 id="backoffice-title">아티스트 관리</h1><p class="page-description">공개할 아티스트 정보와 앨범을 관리하세요.</p></div>
               <div id="backoffice-admin-controls" class="backoffice-admin-controls"></div>
             </div>
             <p id="backoffice-status" class="backoffice-status" role="status" hidden></p>
@@ -495,14 +480,14 @@
           <svg class="mobile-nav-icon" aria-hidden="true"><use href="#icon-queue"></use></svg>
           <span>대기열</span>
         </a>
-        <a class="mobile-nav-link" href="#backoffice" data-view-link="backoffice"><svg class="mobile-nav-icon" aria-hidden="true"><use href="#icon-person"></use></svg><span>백오피스</span></a>
+        <a class="mobile-nav-link" href="#backoffice" data-view-link="backoffice"><svg class="mobile-nav-icon" aria-hidden="true"><use href="#icon-person"></use></svg><span>아티스트</span></a>
       </nav>
     </div>
 
     <dialog class="publish-dialog" id="publish-dialog" aria-labelledby="publish-title">
       <form id="publish-form" class="publish-form">
-        <div class="publish-head"><div><p class="eyebrow">SHARE MUSIC</p><h2 id="publish-title">라이브러리에 공개</h2></div><button class="publish-close" id="publish-close" type="button" aria-label="닫기">×</button></div>
-        <p class="publish-description">제목과 앨범 표지를 확인한 뒤 공개하세요. 표지를 선택하지 않으면 기본 아트가 사용됩니다.</p>
+        <div class="publish-head"><h2 id="publish-title">곡 공개</h2><button class="publish-close" id="publish-close" type="button" aria-label="닫기">×</button></div>
+        <p class="publish-description">공개하면 다른 회원이 곡을 듣고 스타일을 가져올 수 있습니다.</p>
         <label class="field-label" for="publish-title-input">공개 제목</label>
         <input class="text-input" id="publish-title-input" type="text" maxlength="120" required />
         <label class="field-label" for="publish-cover-input">앨범 표지 <span class="optional">선택</span></label>
@@ -512,14 +497,14 @@
         <label class="field-label" for="publish-album">공개 유형</label>
         <select class="text-input" id="publish-album"><option value="">싱글로 공개</option></select>
         <p class="form-error" id="publish-error" role="alert" hidden></p>
-        <div class="publish-actions"><button class="filter-button" id="publish-cancel" type="button">취소</button><button class="primary-button" id="publish-submit" type="submit">라이브러리에 공개</button></div>
+        <div class="publish-actions"><button class="filter-button" id="publish-cancel" type="button">취소</button><button class="primary-button" id="publish-submit" type="submit">곡 공개</button></div>
       </form>
     </dialog>
 
 
-    <footer class="player-bar" aria-label="음악 플레이어">
+    <footer class="player-bar" aria-label="음악 플레이어" hidden>
       <audio id="studio-player" preload="metadata"></audio>
-      <div class="player-track"><div class="player-art" id="player-art"><svg class="icon" aria-hidden="true"><use href="#icon-title"></use></svg></div><div class="player-track-copy"><strong id="player-title">나만의 사운드를 만나보세요</strong><span id="player-subtitle">완성된 곡을 선택해 재생하세요</span></div></div>
+      <div class="player-track"><div class="player-art" id="player-art"><svg class="icon" aria-hidden="true"><use href="#icon-title"></use></svg></div><div class="player-track-copy"><strong id="player-title"></strong><span id="player-subtitle"></span></div></div>
       <div class="player-center">
         <div class="player-controls"><button class="player-button" id="player-prev" type="button" aria-label="이전 곡" disabled><svg class="icon" aria-hidden="true"><use href="#icon-prev"></use></svg></button><button class="player-button player-toggle" id="player-toggle" type="button" aria-label="재생" disabled><svg class="icon" aria-hidden="true"><use href="#icon-play"></use></svg></button><button class="player-button" id="player-next" type="button" aria-label="다음 곡" disabled><svg class="icon" aria-hidden="true"><use href="#icon-next"></use></svg></button></div>
         <div class="player-visualizer-wrap" aria-hidden="true">
@@ -529,79 +514,6 @@
       </div>
       <label class="player-volume"><svg class="icon" aria-hidden="true"><use href="#icon-volume"></use></svg><span class="sr-only">볼륨</span><input id="player-volume" type="range" min="0" max="1" step="0.01" value="0.8" /></label>
     </footer>
-
-    <!-- 서버 전체 대기열 Picture-in-Picture 컴포넌트 -->
-    <div class="queue-pip-widget" id="queue-pip-widget" aria-label="서버 전체 대기열 플로팅 위젯">
-      <!-- 1) 최소화 상태: 플로팅 캡슐 버튼 (Floating Pill) -->
-      <button class="queue-pip-pill" id="queue-pip-pill" type="button" aria-expanded="false" title="서버 대기열 열기">
-        <span class="queue-pip-dot" id="queue-pip-dot" aria-hidden="true"></span>
-        <svg class="icon pip-icon" aria-hidden="true"><use href="#icon-queue"></use></svg>
-        <span class="queue-pip-pill-label" id="queue-pip-pill-label">대기열 확인</span>
-        <span class="queue-pip-pill-count" id="queue-pip-pill-count" hidden>0</span>
-      </button>
-
-      <!-- 2) 확장 상태: 플로팅 윈도우 모달 (Floating Window) -->
-      <div class="queue-pip-window" id="queue-pip-window" role="dialog" aria-labelledby="queue-pip-heading" hidden>
-        <div class="queue-pip-window-head">
-          <div class="queue-pip-head-title">
-            <span class="queue-pip-dot is-active" aria-hidden="true"></span>
-            <strong id="queue-pip-heading">서버 전체 대기열</strong>
-            <span class="queue-pip-head-stat" id="queue-pip-head-stat">0건 실행 중</span>
-          </div>
-          <div class="queue-pip-head-buttons">
-            <button class="pip-btn" id="queue-pip-btn-refresh" type="button" title="새로고침" aria-label="새로고침">
-              <svg class="icon" aria-hidden="true"><use href="#icon-reset"></use></svg>
-            </button>
-            <button class="pip-btn" id="queue-pip-btn-maximize" type="button" title="전체 페이지로 보기" aria-label="전체 페이지로 보기">
-              <svg class="icon" aria-hidden="true"><use href="#icon-maximize"></use></svg>
-            </button>
-            <button class="pip-btn" id="queue-pip-btn-minimize" type="button" title="작게 접기" aria-label="작게 접기">
-              <svg class="icon" aria-hidden="true"><use href="#icon-minimize"></use></svg>
-            </button>
-            <button class="pip-btn" id="queue-pip-btn-close" type="button" title="닫기" aria-label="닫기">
-              <svg class="icon" aria-hidden="true"><use href="#icon-close"></use></svg>
-            </button>
-          </div>
-        </div>
-
-        <div class="queue-pip-scroll" id="queue-pip-scroll">
-          <div class="queue-pip-section">
-            <div class="queue-pip-subhead">
-              <span class="queue-live-pill">LIVE</span>
-              <span>현재 생성 중</span>
-              <span class="queue-pip-badge-count" id="queue-pip-running-num">0</span>
-            </div>
-            <div class="queue-pip-running-box" id="queue-pip-running-box">
-              <!-- running job card -->
-            </div>
-          </div>
-
-          <div class="queue-pip-section">
-            <div class="queue-pip-subhead">
-              <span>대기 목록</span>
-              <span class="queue-pip-badge-count" id="queue-pip-pending-num">0</span>
-            </div>
-            <div class="queue-pip-pending-box" id="queue-pip-pending-box">
-              <!-- pending list -->
-            </div>
-          </div>
-
-          <div class="queue-pip-section queue-pip-section-recent">
-            <div class="queue-pip-subhead">
-              <span>최근 완료된 음악</span>
-            </div>
-            <div class="queue-pip-recent-box" id="queue-pip-recent-box">
-              <!-- recent list -->
-            </div>
-          </div>
-        </div>
-
-        <div class="queue-pip-foot">
-          <span class="queue-pip-device" id="queue-pip-device">엔진 확인 중</span>
-          <span class="queue-pip-pulse-text">실시간 자동 동기화</span>
-        </div>
-      </div>
-    </div>
 
     <div class="growl-region" id="growl-region" aria-live="polite" aria-atomic="false"></div>
     <div class="toast-region sr-only" id="toast-region" aria-live="assertive" aria-atomic="true" hidden>

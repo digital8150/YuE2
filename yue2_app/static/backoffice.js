@@ -11,8 +11,9 @@
       headers: { ...(options.headers || {}), ...(options.method ? { "X-Yue2-CSRF": window.yue2Auth?.csrfToken || "" } : {}) } });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(response.status === 404
-      ? "아티스트 API를 찾을 수 없습니다. 스튜디오 서버를 재시작해 주세요."
-      : data.error || "요청을 처리하지 못했습니다.");
+      ? "아티스트 정보를 찾을 수 없습니다. 화면을 새로고침해 주세요."
+      : response.status === 413 ? "이미지 크기를 확인해 주세요. 파일당 최대 5MB입니다."
+      : "변경 사항을 저장하지 못했습니다. 입력 내용을 확인하고 다시 시도해 주세요.");
     return data;
   }
 

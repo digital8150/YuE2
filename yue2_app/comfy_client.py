@@ -94,7 +94,10 @@ class ComfyClient:
                 self._progress_samples.pop(prompt_id, None)
             elif node:
                 previous_phase = self.progress.get(prompt_id, {}).get("phase")
-                self.progress[prompt_id] = {"phase": "finishing" if previous_phase in {"music", "rendering", "finishing"} else "preparing"}
+                if previous_phase in {"rendering", "finishing"}:
+                    self.progress[prompt_id] = {"phase": "finishing"}
+                elif previous_phase is None:
+                    self.progress[prompt_id] = {"phase": "preparing"}
             return
         if event.get("type") != "progress" or not phase:
             return
@@ -230,6 +233,7 @@ class ComfyClient:
             for node_id, node in prompt.items()
             if (phase := {
                 "YuE2GenerateABC": "abc",
+                "SheetSage2AudioToABC": "sheet",
                 "YuE2GenerateMusic": "music",
                 "KSampler": "rendering",
             }.get(node.get("class_type")))
