@@ -1,0 +1,383 @@
+{
+  "seeded_at": "2026-09-23T16:03:44.842176+00:00",
+  "owner": {
+    "id": 1,
+    "username": "digitalism8150",
+    "display_name": "제세형"
+  },
+  "backup": "E:\\repos\\YuE2\\yue2_app\\data\\yue2.sqlite3.backup-artwork-20260923T160343Z",
+  "artists": {
+    "-1": {
+      "name": "Luna Veil (루나 베일)",
+      "previous": {
+        "id": -1,
+        "user_id": 1,
+        "artist_name": "Luna Veil (루나 베일)",
+        "avatar_filename": "a4d153f303df44f2b43099b375ec93c6.jpg",
+        "banner_filename": "11d24c078cb94f35aade464227257d9b.jpg"
+      },
+      "assets": {
+        "avatar": {
+          "filename": "art_avatar_aa5aee6a1aec4272bfe79d8ee7596f76.jpg",
+          "source": "exec-8e5cbb8e-8663-4788-9af4-f4feaaab88df.png",
+          "size": [
+            800,
+            800
+          ],
+          "bytes": 68888,
+          "sha256": "a8e845f8f709b59e42eea4dc48339d71ace70d83ea534b06cc434e3a69cd86bd"
+        },
+        "banner": {
+          "filename": "art_banner_8753dd27c4fa47cebeb45d8c584d9acc.jpg",
+          "source": "exec-9af4ad8d-24f7-47e0-8585-1c38f708c9b9.png",
+          "size": [
+            1800,
+            600
+          ],
+          "bytes": 172040,
+          "sha256": "53cadcd9f31abd79fbc05f331949d6d64b382abf502be136db204ed1385dc256"
+        }
+      }
+    },
+    "-2": {
+      "name": "KAIROS (카이로스)",
+      "previous": {
+        "id": -2,
+        "user_id": 1,
+        "artist_name": "KAIROS (카이로스)",
+        "avatar_filename": "895b8eb8334547c2819843f1165cb8bc.jpg",
+        "banner_filename": "8e8d30e2ce144b85996d3683a15d76dd.jpg"
+      },
+      "assets": {
+        "avatar": {
+          "filename": "art_avatar_7d7556be6d6049d4899c98d4e4e4e573.jpg",
+          "source": "exec-d8233006-efbd-4e1a-bd66-8a977543c0b7.png",
+          "size": [
+            800,
+            800
+          ],
+          "bytes": 79072,
+          "sha256": "cafdc3870d9348ec2afb753444b00ff37957fb0c6b325914304399a2f25f5b23"
+        },
+        "banner": {
+          "filename": "art_banner_47a525a558254135a0f5537b32151f37.jpg",
+          "source": "exec-1adf85c9-ba8f-42ef-948d-ec45c51a9a10.png",
+          "size": [
+            1800,
+            600
+          ],
+          "bytes": 193289,
+          "sha256": "86f20fe6d7946a34eb49552826c24dbce0b37998f134839e23e65eb5f6d62768"
+        }
+      }
+    },
+    "-3": {
+      "name": "하은 (HaEun)",
+      "previous": {
+        "id": -3,
+        "user_id": 1,
+        "artist_name": "하은 (HaEun)",
+        "avatar_filename": "2854d2d44c884a2fb6f01856f24ab09c.jpg",
+        "banner_filename": "ad00e33272a44ef4953e850797d666eb.jpg"
+      },
+      "assets": {
+        "avatar": {
+          "filename": "art_avatar_2b1c7a350b104725aa061895ab83eacf.jpg",
+          "source": "exec-38077b6b-dac0-4769-96fe-880454c51154.png",
+          "size": [
+            800,
+            800
+          ],
+          "bytes": 110823,
+          "sha256": "831694b98c66e433b6e45727808ab58c7b04f5e36fcbea42b6a85dab6df7a9ba"
+        },
+        "banner": {
+          "filename": "art_banner_7dd462e81bb44bc5bcca31e2c7df862a.jpg",
+          "source": "exec-62b5bf41-ece1-4aa3-b8d6-fd660e967f84.png",
+          "size": [
+            1800,
+            600
+          ],
+          "bytes": 305319,
+          "sha256": "3eddc46169247ca69306c7685969187a889736639a4f2727bd1a3780229680cc"
+        }
+      }
+    },
+    "-4": {
+      "name": "GROOVE MATRIX (그루브 매트릭스)",
+      "previous": {
+        "id": -4,
+        "user_id": 1,
+        "artist_name": "GROOVE MATRIX (그루브 매트릭스)",
+        "avatar_filename": "932931960caa4a5c93732a2c5d0187a7.jpg",
+        "banner_filename": "03bd8961662b4d5181367dd230bd0a33.jpg"
+      },
+      "assets": {
+        "avatar": {
+          "filename": "art_avatar_a69b5ac26b2f421db434086187b3c05f.jpg",
+          "source": "exec-440b7218-7714-4718-b972-6e1c287dbd1f.png",
+          "size": [
+            800,
+            800
+          ],
+          "bytes": 133840,
+          "sha256": "0bf7ed85c4f51e67492ee1d316ab823193199b0eb953e485da0d107deef97c9d"
+        },
+        "banner": {
+          "filename": "art_banner_a788c43a134144ae83980c5dfaef3236.jpg",
+          "source": "exec-1ea4213b-f4a0-4ff8-b24b-f3bf805f66bf.png",
+          "size": [
+            1800,
+            600
+          ],
+          "bytes": 216462,
+          "sha256": "889fbf7f745934238c8431a8e5ce69d5c2f46f8c8650b5df3857059d4943ed5e"
+        }
+      }
+    },
+    "-5": {
+      "name": "Aetheria (에테리아)",
+      "previous": {
+        "id": -5,
+        "user_id": 1,
+        "artist_name": "Aetheria (에테리아)",
+        "avatar_filename": "48ad5d15ef7348d8b12a00583f2488fd.jpg",
+        "banner_filename": "24baf1f931f14930859431922111ef61.jpg"
+      },
+      "assets": {
+        "avatar": {
+          "filename": "art_avatar_4eefdf253c0d46e18be070d687043e5c.jpg",
+          "source": "exec-125b6c79-212c-4223-bfa0-52cc1f62a116.png",
+          "size": [
+            800,
+            800
+          ],
+          "bytes": 102337,
+          "sha256": "b8e2c01a9d7ebded7ea51cc86d34afb6da962052a8f198692c122dade3691410"
+        },
+        "banner": {
+          "filename": "art_banner_ab1a047b8a364aeaaa2fff73c1186214.jpg",
+          "source": "exec-48c4070d-3067-44dd-adff-3dd799c960d1.png",
+          "size": [
+            1800,
+            600
+          ],
+          "bytes": 283002,
+          "sha256": "17dbc6c265d431bb129af4667a8d69523fdecbc2b6f59f4248dbe19693890487"
+        }
+      }
+    }
+  },
+  "albums": {
+    "2c7b66ce-eab9-4b2c-9b00-00b25ebfc7b6": {
+      "title": "Nocturne in Blue",
+      "artist_id": -1,
+      "previous": {
+        "id": "2c7b66ce-eab9-4b2c-9b00-00b25ebfc7b6",
+        "owner_id": 1,
+        "artist_id": -1,
+        "title": "Nocturne in Blue",
+        "cover_filename": "21dada36d2c04eb9bcb1d1b39fdca8bf.jpg"
+      },
+      "asset": {
+        "filename": "art_album_40fd38b4915b4a66b27cbc1311aead57.jpg",
+        "source": "exec-52308621-adb4-4a2d-9217-8203824f43a2.png",
+        "size": [
+          1200,
+          1200
+        ],
+        "bytes": 221860,
+        "sha256": "73ee2831fb202585511e9b0133c24ccf4b65c88859823064361e0a9c8243daf3"
+      }
+    },
+    "c21fd1ac-18e3-4ef1-a1ce-7433c54ac76d": {
+      "title": "Stardust Reverie",
+      "artist_id": -1,
+      "previous": {
+        "id": "c21fd1ac-18e3-4ef1-a1ce-7433c54ac76d",
+        "owner_id": 1,
+        "artist_id": -1,
+        "title": "Stardust Reverie",
+        "cover_filename": "40fcaf9be62a453aa228f471008ddbb3.jpg"
+      },
+      "asset": {
+        "filename": "art_album_0266cadfa1a243e387589b606c5881e8.jpg",
+        "source": "exec-0229f116-e523-48a1-a313-32d8030cb2b1.png",
+        "size": [
+          1200,
+          1200
+        ],
+        "bytes": 324638,
+        "sha256": "94af5943d793a61efa25557ce4b0645dd1659bc8044afa7996d44b72861010aa"
+      }
+    },
+    "7e142e68-eaba-4172-9013-0cbaad4dd174": {
+      "title": "Neon Odyssey 2099",
+      "artist_id": -2,
+      "previous": {
+        "id": "7e142e68-eaba-4172-9013-0cbaad4dd174",
+        "owner_id": 1,
+        "artist_id": -2,
+        "title": "Neon Odyssey 2099",
+        "cover_filename": "3f5585e0da48456887a171f91e4472c6.jpg"
+      },
+      "asset": {
+        "filename": "art_album_ac4378a238e040bfaf3b6740f2cf7ffa.jpg",
+        "source": "exec-5d41229f-8566-4878-a78e-d2705432627b.png",
+        "size": [
+          1200,
+          1200
+        ],
+        "bytes": 423973,
+        "sha256": "4d305732257587fc507b1b96b5cb0f24f53e64a35ef4881fda5d7f6ce2d85d71"
+      }
+    },
+    "c93473e6-5c5b-4371-971c-0a1e4f908e2c": {
+      "title": "Analog Dystopia",
+      "artist_id": -2,
+      "previous": {
+        "id": "c93473e6-5c5b-4371-971c-0a1e4f908e2c",
+        "owner_id": 1,
+        "artist_id": -2,
+        "title": "Analog Dystopia",
+        "cover_filename": "d53edd24ec8d4edeb5230ad1cb0f1506.jpg"
+      },
+      "asset": {
+        "filename": "art_album_4a2276374bc94d4ba50118827f82f6a3.jpg",
+        "source": "exec-b138a71b-011f-4cde-ac81-a159c15ca34d.png",
+        "size": [
+          1200,
+          1200
+        ],
+        "bytes": 320557,
+        "sha256": "214492966b9df3466c7be65f8a0e788b52103188e3d57b2dbd483111ba1d2210"
+      }
+    },
+    "a0e3b706-94ae-46e1-8515-2b4d04b25bdc": {
+      "title": "오래된 일기장의 봄",
+      "artist_id": -3,
+      "previous": {
+        "id": "a0e3b706-94ae-46e1-8515-2b4d04b25bdc",
+        "owner_id": 1,
+        "artist_id": -3,
+        "title": "오래된 일기장의 봄",
+        "cover_filename": "84be931ceb434d24b69a68648bc75b3b.jpg"
+      },
+      "asset": {
+        "filename": "art_album_d1ac39cb55a048a3b62f04a487edec69.jpg",
+        "source": "exec-98873a32-4029-4ed5-be9e-cd4d47f72074.png",
+        "size": [
+          1200,
+          1200
+        ],
+        "bytes": 269513,
+        "sha256": "f6c51777340b555e9eb01a00ef27d5a12862b509c2d6d92b5a96800855ffde26"
+      }
+    },
+    "aa2a3c57-f691-46f9-9876-c84afc3d2a2b": {
+      "title": "비 내린 숲길",
+      "artist_id": -3,
+      "previous": {
+        "id": "aa2a3c57-f691-46f9-9876-c84afc3d2a2b",
+        "owner_id": 1,
+        "artist_id": -3,
+        "title": "비 내린 숲길",
+        "cover_filename": "c21d59056fa7471bb1368d27d841a557.jpg"
+      },
+      "asset": {
+        "filename": "art_album_a58cd6c44e7d41e9a7cc5da504f0a288.jpg",
+        "source": "exec-59ad7bb8-4767-413c-9c95-4aaff0ce5c33.png",
+        "size": [
+          1200,
+          1200
+        ],
+        "bytes": 431047,
+        "sha256": "28ca6ca161eae18e02b150b4bb4e0c7bfb3cada9deafa43915d05f5e5fe379b4"
+      }
+    },
+    "0b7e6814-6275-4580-af4a-7b6cceb3cb20": {
+      "title": "City Lights Boulevard",
+      "artist_id": -4,
+      "previous": {
+        "id": "0b7e6814-6275-4580-af4a-7b6cceb3cb20",
+        "owner_id": 1,
+        "artist_id": -4,
+        "title": "City Lights Boulevard",
+        "cover_filename": "bc4add55974544fc95eda486f9ab99e8.jpg"
+      },
+      "asset": {
+        "filename": "art_album_7bebce3c2ff44817937ee18cc6370e74.jpg",
+        "source": "exec-1c5afb9b-0d1f-4960-be46-120cefbf7dd7.png",
+        "size": [
+          1200,
+          1200
+        ],
+        "bytes": 362924,
+        "sha256": "3309553f3c5e1ae777fae7f176128d2f2a4f3737b52a1a4ab2428a4a239e5be0"
+      }
+    },
+    "b07c0148-dc47-4ede-bcf1-75053c47d1c0": {
+      "title": "Midnight Groove Session",
+      "artist_id": -4,
+      "previous": {
+        "id": "b07c0148-dc47-4ede-bcf1-75053c47d1c0",
+        "owner_id": 1,
+        "artist_id": -4,
+        "title": "Midnight Groove Session",
+        "cover_filename": "10fc1112719d4e2bb2b332bba0803a6a.jpg"
+      },
+      "asset": {
+        "filename": "art_album_7bfd125b61c745c0b8604dfd3cd9d229.jpg",
+        "source": "exec-57a98eab-1e0d-4763-8d51-9fbd8b72f701.png",
+        "size": [
+          1200,
+          1200
+        ],
+        "bytes": 247100,
+        "sha256": "719cfaf2aa4f67658634b39ea18d894aead7e9189e0a9ea3cc71afa32f0ce4f4"
+      }
+    },
+    "3bbdf935-1b53-4583-863b-6d6633cdee02": {
+      "title": "Chronicles of the Ancient Realm",
+      "artist_id": -5,
+      "previous": {
+        "id": "3bbdf935-1b53-4583-863b-6d6633cdee02",
+        "owner_id": 1,
+        "artist_id": -5,
+        "title": "Chronicles of the Ancient Realm",
+        "cover_filename": "8b2c347643474237b57e51097bb5dedb.jpg"
+      },
+      "asset": {
+        "filename": "art_album_a470db32144342ce95d0821b0cf865bc.jpg",
+        "source": "exec-e0f09342-35e8-4538-bd70-9478c02945d4.png",
+        "size": [
+          1200,
+          1200
+        ],
+        "bytes": 468071,
+        "sha256": "b3fb3b0bd63767a4b1a31dbebc85978c365d4eb47a759adce7986e227350d3ce"
+      }
+    },
+    "00d123a9-9014-4641-b4ac-696df34bd887": {
+      "title": "Celestial Horizons",
+      "artist_id": -5,
+      "previous": {
+        "id": "00d123a9-9014-4641-b4ac-696df34bd887",
+        "owner_id": 1,
+        "artist_id": -5,
+        "title": "Celestial Horizons",
+        "cover_filename": "79a26e0e5eca4d66b9e9aa27d34e0a1b.jpg"
+      },
+      "asset": {
+        "filename": "art_album_6d90323a106e40ecaadb8b202aa101b2.jpg",
+        "source": "exec-5688d121-e2aa-429c-94ed-7cf9923c2f0b.png",
+        "size": [
+          1200,
+          1200
+        ],
+        "bytes": 348402,
+        "sha256": "ec99f2586d826a12c6ce660dc2d8513d035aeeb54dfa7112087ee2e0a9ff8e0c"
+      }
+    }
+  }
+}

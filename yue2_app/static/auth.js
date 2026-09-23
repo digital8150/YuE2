@@ -124,21 +124,38 @@
         location.reload();
       });
       profile.append(name, logout);
-      if (result.user.role === "admin") {
-        const adminControls = document.querySelector("#backoffice-admin-controls");
-        if (adminControls) addAdminControls(adminControls);
-      }
     }
+    if (result.user.role === "admin") addAdminControls();
     window.dispatchEvent(new Event("yue2-ready"));
   }
 
-  function addAdminControls(profile) {
-    const button = document.createElement("button");
-    button.className = "auth-admin-button";
-    button.type = "button";
-    button.textContent = "초대 코드 관리";
-    button.setAttribute("aria-haspopup", "dialog");
-    button.setAttribute("aria-expanded", "false");
+  function addAdminControls() {
+    if (document.querySelector(".auth-admin-panel")) return;
+    const buttons = [];
+    let lastOpener = null;
+    function addButton(container, className, label, icon = false) {
+      if (!container) return;
+      const button = document.createElement("button");
+      button.className = className;
+      button.type = "button";
+      button.setAttribute("aria-label", "초대 코드 관리");
+      button.setAttribute("aria-haspopup", "dialog");
+      button.setAttribute("aria-expanded", "false");
+      if (icon) {
+        button.innerHTML = '<svg class="nav-icon" aria-hidden="true"><use href="#icon-key"></use></svg>';
+        const text = document.createElement("span");
+        text.textContent = label;
+        button.append(text);
+      } else {
+        button.textContent = label;
+      }
+      container.append(button);
+      buttons.push(button);
+      return button;
+    }
+    addButton(document.querySelector(".primary-nav"), "nav-link auth-admin-nav-button", "초대 코드 관리", true);
+    addButton(document.querySelector(".mobile-header"), "auth-admin-mobile-button", "초대 코드");
+    addButton(document.querySelector("#backoffice-admin-controls"), "auth-admin-button", "초대 코드 관리");
     const panel = document.createElement("dialog");
     panel.className = "auth-admin-panel";
     panel.setAttribute("aria-labelledby", "auth-admin-title");
@@ -157,10 +174,9 @@
     content.className = "auth-admin-content";
     panel.append(header, content);
     document.body.append(panel);
-    profile.append(button);
     panel.addEventListener("close", () => {
-      button.setAttribute("aria-expanded", "false");
-      button.focus();
+      buttons.forEach((button) => button.setAttribute("aria-expanded", "false"));
+      lastOpener?.focus();
     });
     panel.addEventListener("click", (event) => {
       if (event.target === panel) panel.close();
@@ -266,13 +282,14 @@
       content.append(createForm, list);
     }
 
-    button.addEventListener("click", async () => {
+    async function togglePanel(event) {
       if (panel.open) {
         panel.close();
         return;
       }
+      lastOpener = event.currentTarget;
       panel.showModal();
-      button.setAttribute("aria-expanded", "true");
+      buttons.forEach((button) => button.setAttribute("aria-expanded", "true"));
       try {
         await loadInvites();
         content.querySelector(".auth-new-invite input")?.focus();
@@ -280,7 +297,8 @@
         alert("초대 코드를 불러오지 못했습니다. 다시 시도해 주세요.");
         panel.close();
       }
-    });
+    }
+    buttons.forEach((button) => button.addEventListener("click", togglePanel));
   }
 
   switchButton.addEventListener("click", () => {
