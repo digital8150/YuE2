@@ -38,27 +38,26 @@ test.afterEach(() => {
   delete globalThis.isSecureContext;
 });
 
-test('YuE2 drafts require a bounded title, style and sectioned lyric', () => {
+test('YuE2 drafts check only JSON fields and types, then preserve prompt text', () => {
   const draft = assistant.parseDraft(JSON.stringify({
     title: 'First Light',
     style: 'English, indie pop, soft female vocal, 90 BPM, piano and drums',
-    lyrics: '[Verse]\nFirst light\n\n[Chorus]\nStay with me'
-  }), { language: 'ko', instrumental: false });
+    lyrics: '[Intro]\nFirst light\n\n[Production: louder]\nStay with me',
+    instrumental: false, target_duration_seconds: 150
+  }));
   assert.equal(draft.title, 'First Light');
-  assert.match(draft.style, /^Korean, indie pop/);
-  assert.equal(draft.lyrics, '[Verse]\nFirst light\n\n[Chorus]\nStay with me');
-  assert.throws(() => assistant.parseDraft(JSON.stringify({ title: 'Song', style: 'pop', lyrics: 'Just words' }),
-    { language: 'en', instrumental: false }), /가사 구조/);
-  assert.throws(() => assistant.parseDraft(JSON.stringify({ title: 'Song', style: 'pop', lyrics: '[Verse]\n[Production: louder]\nHi' }),
-    { language: 'en', instrumental: false }), /구간 태그/);
-  assert.throws(() => assistant.parseDraft(JSON.stringify({ style: 'pop', lyrics: '[Verse]\nHi' }),
-    { language: 'en', instrumental: false }), /제목/);
-  assert.throws(() => assistant.parseDraft(JSON.stringify({ title: 'Line one\nLine two', style: 'pop', lyrics: '[Verse]\nHi' }),
-    { language: 'en', instrumental: false }), /곡 제목/);
-  assert.throws(() => assistant.parseDraft(JSON.stringify({ title: 'x'.repeat(121), style: 'pop', lyrics: '[Verse]\nHi' }),
-    { language: 'en', instrumental: false }), /곡 제목/);
-  assert.equal(assistant.parseDraft(JSON.stringify({ title: 'Quiet Room', style: 'ambient piano', lyrics: 'ignored' }),
-    { language: 'en', instrumental: true }).lyrics, '[instrumental]');
+  assert.equal(draft.style, 'English, indie pop, soft female vocal, 90 BPM, piano and drums');
+  assert.equal(draft.lyrics, '[Intro]\nFirst light\n\n[Production: louder]\nStay with me');
+  assert.equal(draft.maxDurationSeconds, 180);
+  assert.equal(assistant.parseDraft(JSON.stringify({
+    title: 'Line one\nLine two', style: '', lyrics: 'Just words', instrumental: false, target_duration_seconds: 0
+  })).lyrics, 'Just words');
+  assert.throws(() => assistant.parseDraft('not JSON'), /초안을 읽지/);
+  for (const fields of [
+    { style: 'pop', lyrics: 'Hi', instrumental: false, target_duration_seconds: 0 },
+    { title: 'Song', style: 'pop', lyrics: 'Hi', instrumental: 'false', target_duration_seconds: 0 },
+    { title: 'Song', style: 'pop', lyrics: 'Hi', instrumental: false, target_duration_seconds: '150' }
+  ]) assert.throws(() => assistant.parseDraft(JSON.stringify(fields)), /JSON의 필드 형식/);
 });
 
 test('an empty or rejected line translation keeps the draft and identifies affected lines', async () => {
@@ -103,8 +102,8 @@ test('Korean brief and lyrics use local translation, then require explicit apply
       return {
         prompt: async (input, promptOptions) => {
           assert.match(input, /rainy indie pop/);
-          assert.deepEqual(promptOptions.responseConstraint.required, ['title', 'style', 'lyrics', 'instrumental']);
-          return JSON.stringify({ title: 'Rain at Night', style: 'indie pop, female vocal, 90 BPM, piano', lyrics: '[Verse]\nRain at night\n\n[Chorus]\nCome home' });
+          assert.deepEqual(promptOptions.responseConstraint.required, ['title', 'style', 'lyrics', 'instrumental', 'target_duration_seconds']);
+          return JSON.stringify({ title: 'Rain at Night', style: 'Korean, indie pop, female vocal, 90 BPM, piano', lyrics: '[Verse]\nRain at night\n\n[Chorus]\nCome home', instrumental: false, target_duration_seconds: 0 });
         },
         destroy() { calls.push('model destroyed'); }
       };
@@ -161,7 +160,7 @@ test('Korean instrumental drafts translate the title without translating lyrics'
   globalThis.LanguageModel = {
     availability: async () => 'available',
     create: async () => ({
-      prompt: async () => JSON.stringify({ title: 'Quiet Room', style: 'ambient piano', lyrics: '' })
+      prompt: async () => JSON.stringify({ title: 'Quiet Room', style: 'instrumental, ambient piano', lyrics: '', instrumental: true, target_duration_seconds: 0 })
     })
   };
   globalThis.Translator = {
@@ -179,7 +178,7 @@ test('Korean instrumental drafts translate the title without translating lyrics'
   assert.equal(get('#prompt-result-title').textContent, '조용한 방');
   get('#prompt-apply').emit('click');
   assert.equal(applied.title, '조용한 방');
-  assert.equal(applied.lyrics, '[instrumental]');
+  assert.equal(applied.lyrics, '');
   assert.equal(applied.instrumental, true);
 });
 
@@ -193,7 +192,8 @@ test('instrumental idea selects the switch and plans an exact 2:30 tag timeline'
         promptText = input;
         return JSON.stringify({
           title: 'Dawn Procession', style: 'cinematic orchestra, strings and brass', instrumental: true,
-          lyrics: '[intro 0:00-0:15]\n[verse 0:15-0:45]\n[chorus 0:45-1:10]\n[bridge 1:10-1:40]\n[chorus 1:40-2:05]\n[outro 2:05-2:30]'
+          lyrics: '[intro 0:00-0:15]\n[verse 0:15-0:45]\n[chorus 0:45-1:10]\n[bridge 1:10-1:40]\n[chorus 1:40-2:05]\n[outro 2:05-2:30]',
+          target_duration_seconds: 150
         });
       }
     })
@@ -213,7 +213,7 @@ test('instrumental idea selects the switch and plans an exact 2:30 tag timeline'
   await new Promise(setImmediate);
   await get('#prompt-generate').emit('click');
   assert.match(promptText, /Current instrumental switch: off/);
-  assert.match(promptText, /Target duration: 2:30 \(150 seconds\)/);
+  assert.match(promptText, /Return target_duration_seconds as an integer/);
   assert.match(get('#prompt-result-mode').textContent, /연주곡.*2:30.*3:00/);
   assert.match(get('#prompt-result-lyrics').textContent, /\[outro 2:05-2:30\]$/);
   get('#prompt-apply').emit('click');
@@ -224,30 +224,23 @@ test('instrumental idea selects the switch and plans an exact 2:30 tag timeline'
   assert.deepEqual(translated, ['2분30초 타깃의 오케스트라 연주곡', 'Dawn Procession']);
 });
 
-test('timed instrumental plans keep musical sections and correct an invalid end time', () => {
-  assert.equal(assistant.extractTargetDuration('2분 30초 타깃'), 150);
-  assert.equal(assistant.extractTargetDuration('150초 길이'), 150);
-  assert.equal(assistant.extractTargetDuration('2:30 orchestral score'), 150);
-  assert.equal(assistant.extractTargetDuration('2 minutes and 30 seconds orchestra'), 150);
-  assert.equal(assistant.extractTargetDuration('90 BPM strings'), null);
+test('timed instrumental plans remain as the model wrote them', () => {
   const draft = assistant.parseDraft(JSON.stringify({
     title: 'A New Path', style: 'orchestral, strings', instrumental: true,
-    lyrics: '[intro 0:00-0:10]\n[verse 0:10-1:00]\n[outro 1:00-2:00]'
-  }), { language: 'en', instrumental: false, targetDurationSeconds: 150 });
+    lyrics: '[intro 0:00-0:10]\n[verse 0:10-1:00]\n[outro 1:00-2:00]',
+    target_duration_seconds: 150
+  }));
   assert.equal(draft.instrumental, true);
   assert.equal(draft.durationSeconds, 150);
   assert.equal(draft.maxDurationSeconds, 180);
   assert.match(draft.lyrics, /^\[intro 0:00-/);
-  assert.match(draft.lyrics, /\[outro .*?-2:30\]$/);
+  assert.match(draft.lyrics, /\[outro 1:00-2:00\]$/);
   assert.equal(draft.lyrics.split('\n').length, 3);
   const vocal = assistant.parseDraft(JSON.stringify({
-    title: 'Morning', style: 'soft pop, piano', instrumental: false, lyrics: '[Verse]\nHello'
-  }), { language: 'en', instrumental: true });
+    title: 'Morning', style: 'soft pop, piano', instrumental: false, lyrics: '[Verse]\nHello', target_duration_seconds: 0
+  }));
   assert.equal(vocal.instrumental, false);
   assert.equal(vocal.lyrics, '[Verse]\nHello');
-  const untimed = assistant.normalizeInstrumentalPlan('[Intro]\n[Chorus]\n[Outro]');
-  assert.equal(untimed.lyrics, '[intro]\n[chorus]\n[outro]');
-  assert.equal(untimed.durationSeconds, null);
   assert.equal(assistant.maxDurationWithMargin(60), 90);
   assert.equal(assistant.maxDurationWithMargin(300), 360);
   assert.equal(assistant.maxDurationWithMargin(890), 900);
