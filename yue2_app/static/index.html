@@ -7,10 +7,10 @@
     <meta name="description" content="YUE STUDIO 음악 생성 대시보드" />
     <title>YUE STUDIO</title>
     <link rel="icon" type="image/svg+xml" href="static/favicon.svg" />
-    <link rel="stylesheet" href="static/styles.css?v=20260924-instrumental" />
+    <link rel="stylesheet" href="static/styles.css?v=20260924-workers" />
     <script src="static/auth.js" defer></script>
     <script src="static/prompt_assistant.js?v=20260924-numbered-sections" defer></script>
-    <script src="static/app.js?v=20260924-numbered-sections" defer></script>
+    <script src="static/app.js?v=20260924-workers" defer></script>
     <script src="static/backoffice.js" defer></script>
   </head>
   <body>
@@ -410,6 +410,11 @@
                 </div>
 
                 <div class="queue-card-group">
+                  <h2 class="queue-group-title">연결된 GPU 워커 <span id="queue-worker-count">0</span></h2>
+                  <div id="queue-workers" class="queue-workers" aria-live="polite"></div>
+                </div>
+
+                <div class="queue-card-group">
                   <h2 class="queue-group-title">생성 중</h2>
                   <div class="queue-page-running-slot" id="queue-page-running">
                     <!-- Populated dynamically -->
@@ -425,6 +430,25 @@
               </div>
 
               <aside class="queue-view-aside">
+                <div class="worker-contribute" id="worker-contribute" hidden>
+                  <h2 class="queue-group-title">내 GPU 기여하기</h2>
+                  <p>GPU가 있는 PC에 생성 엔진과 워커를 설치하면 음악 생성 작업을 함께 처리할 수 있습니다.</p>
+                  <a class="worker-guide-link" href="static/worker-setup-agent.md" download="YuE2-GPU-worker-agent-guide.md">코딩 에이전트용 설치 가이드 받기</a>
+                  <p class="worker-guide-hint">가이드를 내려받아 Codex에 전달하고 “이 문서대로 내 PC에 워커를 설치해 줘”라고 요청하세요.</p>
+                  <form id="worker-create-form" class="worker-create-form">
+                    <label for="worker-name">워커 이름</label>
+                    <div><input id="worker-name" name="name" maxlength="50" placeholder="예: 민수의 RTX 4070" required /><button type="submit">연결 키 발급</button></div>
+                  </form>
+                  <div id="worker-credential" class="worker-credential" hidden>
+                    <strong>연결 키는 지금만 표시됩니다.</strong>
+                    <p>아래 설정을 가이드와 함께 코딩 에이전트에 전달하세요. 공개 채팅이나 저장소에 올리지 마세요.</p>
+                    <pre id="worker-config"></pre>
+                    <button id="worker-copy-config" type="button">설정 복사</button>
+                  </div>
+                  <p id="worker-form-status" role="status" hidden></p>
+                  <h3>내 워커</h3>
+                  <div id="my-workers"></div>
+                </div>
                 <h2 class="queue-group-title">최근 완성된 곡</h2>
                 <div class="queue-page-recent-slot" id="queue-page-recent">
                   <!-- Populated dynamically -->

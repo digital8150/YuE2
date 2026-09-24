@@ -119,7 +119,8 @@ class ComfyClient:
         rate = (value - samples[0][1]) / elapsed if elapsed > 0 else 0
         self.progress[prompt_id] = {
             "phase": phase, "current": value, "total": maximum,
-            "rate": round(max(0, rate), 1) if phase in {"abc", "music"} else None,
+            "rate": round(max(0, rate), 3) if phase == "rendering" else
+                    round(max(0, rate), 1) if phase in {"abc", "music"} else None,
         }
 
     def progress_for(self, prompt_id: str) -> dict[str, Any] | None:

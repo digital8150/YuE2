@@ -3,6 +3,7 @@
 import os
 import io
 import tempfile
+import secrets
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -17,30 +18,62 @@ from yue2_app.server import create_app
 class MemoryDispatch:
     def __init__(self):
         self.jobs = {}
+        self.records = {}
+        self.connected = {}
 
     def enqueue(self, job_id, payload):
         self.jobs[job_id] = {"payload": payload, "status": "queued"}
 
     def claim(self, worker_id, device="", vram=""):
+        self.connected[worker_id] = {"worker_id": worker_id, "name": self.records.get(worker_id, {}).get("name", worker_id),
+                                     "device": device, "vram": vram, "status": "idle", "progress": None}
         for job_id, job in self.jobs.items():
             if job["status"] == "queued":
                 job.update(status="running", worker_id=worker_id, token="lease")
+                self.connected[worker_id]["status"] = "busy"
                 return {"job_id": job_id, "payload": job["payload"], "attempts": 1, "lease_token": "lease"}
         return None
 
     def heartbeat(self, job_id, worker_id, token, progress=None):
         job = self.jobs.get(job_id)
-        return bool(job and job["status"] == "running" and job["worker_id"] == worker_id and job["token"] == token)
+        valid = bool(job and job["status"] == "running" and job["worker_id"] == worker_id and job["token"] == token)
+        if valid and worker_id in self.connected:
+            self.connected[worker_id]["progress"] = progress
+        return valid
 
     def finish(self, job_id, worker_id, token, status, output_filename=None):
         if not self.heartbeat(job_id, worker_id, token):
             return False
         self.jobs[job_id]["status"] = status
         self.jobs[job_id]["output_filename"] = output_filename
+        if worker_id in self.connected:
+            self.connected[worker_id].update(status="idle", progress=None)
         return True
 
     def workers(self):
-        return [{"device": "test GPU", "vram": "12GB"}]
+        return list(self.connected.values())
+
+    def create_credential(self, owner_id, name):
+        worker_id = "gpu-" + secrets.token_hex(12)
+        token = secrets.token_urlsafe(32)
+        self.records[worker_id] = {"owner_id": owner_id, "name": name, "token": token}
+        return {"worker_id": worker_id, "name": name, "token": token}
+
+    def authenticate(self, worker_id, token):
+        record = self.records.get(worker_id)
+        return bool(record and record["token"] == token)
+
+    def credentials(self, owner_id):
+        return [{"worker_id": key, "name": value["name"]} for key, value in self.records.items()
+                if value["owner_id"] == owner_id]
+
+    def revoke_credential(self, owner_id, worker_id):
+        record = self.records.get(worker_id)
+        if not record or record["owner_id"] != owner_id:
+            return False
+        del self.records[worker_id]
+        self.connected.pop(worker_id, None)
+        return True
 
     def expired(self):
         return []
@@ -100,6 +133,60 @@ class DistributedFlowTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.close()
         self.temp.cleanup()
+
+    async def test_member_can_register_monitor_and_revoke_own_worker(self):
+        auth = self.client.server.app["auth"]
+        auth.create_user("member1", "Member", "strong-password-123", status="approved")
+        login = await self.client.post("/api/auth/login", json={"username": "member1", "password": "strong-password-123"})
+        member_csrf = (await login.json())["csrf_token"]
+        denied = await self.client.post("/api/my/workers", json={"name": "My GPU"})
+        self.assertEqual(denied.status, 403)
+        created = await self.client.post("/api/my/workers", json={"name": "My GPU"},
+                                         headers={"X-Yue2-CSRF": member_csrf})
+        self.assertEqual(created.status, 201, await created.text())
+        self.assertEqual(created.headers.get("Cache-Control"), "no-store")
+        credential = await created.json()
+        headers = {"Authorization": "Bearer " + credential["token"], "X-Yue-Worker": credential["worker_id"]}
+        listed = await self.client.get("/api/my/workers")
+        self.assertEqual((await listed.json())["workers"], [{"worker_id": credential["worker_id"],
+                                                             "name": "My GPU", "connection": "offline"}])
+        connected = await self.client.post("/api/worker/claim", json={"device": "RTX", "vram": "12GB"}, headers=headers)
+        self.assertEqual(connected.status, 200)
+        queue = await self.client.get("/api/queue")
+        worker = (await queue.json())["workers"][0]
+        self.assertEqual((worker["name"], worker["status"]), ("My GPU", "idle"))
+
+        form = FormData()
+        form.add_field("mode", "original")
+        form.add_field("style", "ambient")
+        form.add_field("lyrics", "hello")
+        form.add_field("planning_enabled", "false")
+        created_job = await self.client.post("/api/generations", data=form,
+                                             headers={"X-Yue2-CSRF": member_csrf})
+        self.assertEqual(created_job.status, 202, await created_job.text())
+        job_id = (await created_job.json())["id"]
+        claimed = await self.client.post("/api/worker/claim", json={"device": "RTX", "vram": "12GB"}, headers=headers)
+        self.assertEqual((await claimed.json())["job"]["job_id"], job_id)
+        heartbeat = await self.client.post("/api/worker/heartbeat", json={
+            "job_id": job_id, "lease_token": "lease", "progress": {"phase": "music", "rate": 12.5}}, headers=headers)
+        self.assertEqual(heartbeat.status, 200)
+        queue = await self.client.get("/api/queue")
+        worker = (await queue.json())["workers"][0]
+        self.assertEqual((worker["status"], worker["progress"]), ("busy", {"phase": "music", "rate": 12.5}))
+
+        auth.create_user("member2", "Other", "strong-password-123", status="approved")
+        other_login = await self.client.post("/api/auth/login", json={"username": "member2", "password": "strong-password-123"})
+        other_csrf = (await other_login.json())["csrf_token"]
+        forbidden = await self.client.delete(f"/api/my/workers/{credential['worker_id']}",
+                                              headers={"X-Yue2-CSRF": other_csrf})
+        self.assertEqual(forbidden.status, 404)
+        member_login = await self.client.post("/api/auth/login", json={"username": "member1", "password": "strong-password-123"})
+        member_csrf = (await member_login.json())["csrf_token"]
+        revoked = await self.client.delete(f"/api/my/workers/{credential['worker_id']}",
+                                            headers={"X-Yue2-CSRF": member_csrf})
+        self.assertEqual(revoked.status, 200)
+        rejected = await self.client.post("/api/worker/claim", json={}, headers=headers)
+        self.assertEqual(rejected.status, 401)
 
     async def test_claim_upload_and_seek(self):
         form = FormData()

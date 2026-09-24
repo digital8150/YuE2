@@ -116,7 +116,16 @@
     queuePageRunning: $("#queue-page-running"),
     queuePagePending: $("#queue-page-pending"),
     queuePageRecent: $("#queue-page-recent"),
-    queuePagePendingCount: $("#queue-page-pending-count")
+    queuePagePendingCount: $("#queue-page-pending-count"),
+    queueWorkers: $("#queue-workers"),
+    queueWorkerCount: $("#queue-worker-count"),
+    workerContribute: $("#worker-contribute"),
+    workerCreateForm: $("#worker-create-form"),
+    workerCredential: $("#worker-credential"),
+    workerConfig: $("#worker-config"),
+    workerCopyConfig: $("#worker-copy-config"),
+    workerFormStatus: $("#worker-form-status"),
+    myWorkers: $("#my-workers")
   };
 
   const defaults = {
@@ -2602,6 +2611,8 @@
   const QueueManager = {
     refreshTimer: null,
     requestId: 0,
+    myWorkers: [],
+    mineLoaded: false,
 
     init() {
       this.bindEvents();
@@ -2646,6 +2657,97 @@
           this.togglePip(false);
         });
       }
+      refs.workerCreateForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const button = refs.workerCreateForm.querySelector('button[type="submit"]');
+        button.disabled = true;
+        refs.workerFormStatus.hidden = true;
+        try {
+          const name = refs.workerCreateForm.elements.name.value.trim();
+          const created = await fetchJson("/api/my/workers", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name })
+          });
+          refs.workerConfig.textContent = `set "YUE2_SERVER_URL=${window.location.origin}${BASE_PATH}"\nset "YUE2_WORKER_ID=${created.worker_id}"\nset "YUE2_WORKER_TOKEN=${created.token}"`;
+          refs.workerCredential.hidden = false;
+          refs.workerCreateForm.reset();
+          await this.loadMine();
+        } catch (error) {
+          refs.workerFormStatus.textContent = error.message;
+          refs.workerFormStatus.hidden = false;
+        } finally {
+          button.disabled = false;
+        }
+      });
+      refs.workerCopyConfig?.addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(refs.workerConfig.textContent); showToast("워커 설정을 복사했습니다."); }
+        catch { showToast("복사할 수 없습니다. 설정을 직접 선택해 복사하세요.", "error"); }
+      });
+    },
+
+    async loadMine() {
+      try {
+        const data = await fetchJson("/api/my/workers");
+        this.myWorkers = Array.isArray(data.workers) ? data.workers : [];
+        this.mineLoaded = true;
+        this.renderMine();
+      } catch (error) {
+        if (refs.myWorkers) refs.myWorkers.textContent = error.message;
+      }
+    },
+
+    renderMine() {
+      if (!refs.myWorkers) return;
+      refs.myWorkers.replaceChildren();
+      if (!this.myWorkers.length) {
+        refs.myWorkers.append(element("p", { text: "아직 등록한 워커가 없습니다." }));
+        return;
+      }
+      const connected = new Map((state.queue.workers || []).map((worker) => [worker.worker_id, worker]));
+      this.myWorkers.forEach((record) => {
+        const status = connected.get(record.worker_id)?.status || "offline";
+        const label = status === "busy" ? "작업 중" : status === "idle" ? "유휴" : "연결 안 됨";
+        const revoke = element("button", { text: "연결 해제", attrs: { type: "button" } });
+        revoke.addEventListener("click", async () => {
+          if (!window.confirm(`${record.name} 워커의 연결 키를 폐기할까요? 실행 중인 작업도 연결이 끊깁니다.`)) return;
+          revoke.disabled = true;
+          try {
+            await fetchJson(`/api/my/workers/${encodeURIComponent(record.worker_id)}`, { method: "DELETE" });
+            await this.loadMine();
+            await this.poll();
+          } catch (error) { showToast(error.message, "error"); revoke.disabled = false; }
+        });
+        refs.myWorkers.append(element("div", { className: "my-worker-row" }, [
+          element("span", { text: `${record.name} · ${label}` }), revoke
+        ]));
+      });
+    },
+
+    renderWorkers(workers) {
+      if (refs.queueWorkerCount) refs.queueWorkerCount.textContent = String(workers.length);
+      if (!refs.queueWorkers) return;
+      refs.queueWorkers.replaceChildren();
+      if (!workers.length) {
+        refs.queueWorkers.append(element("div", { className: "queue-empty-text", text: "연결된 GPU 워커가 없습니다." }));
+        return;
+      }
+      workers.forEach((worker) => {
+        const progress = worker.progress || {};
+        const rate = Number(progress.rate);
+        let speed = "";
+        if (Number.isFinite(rate) && rate > 0) {
+          if (progress.phase === "abc" || progress.phase === "music") speed = `${rate.toFixed(1)} tok/s`;
+          else if (progress.phase === "rendering") speed = `${(1 / rate).toFixed(2)} s/it`;
+        }
+        const phase = { abc: "ABC 생성", sheet: "악보 분석", music: "음악 토큰 생성", rendering: "오디오 렌더링", finishing: "마무리", preparing: "준비" }[progress.phase] || "";
+        refs.queueWorkers.append(element("div", { className: "queue-worker-row" }, [
+          element("div", { className: "queue-worker-main" }, [
+            element("strong", { text: worker.name || worker.worker_id || "GPU 워커" }),
+            element("small", { text: [worker.device, worker.vram].filter(Boolean).join(" · ") })
+          ]),
+          element("span", { className: `queue-worker-state ${worker.status === "busy" ? "is-busy" : ""}`,
+            text: worker.status === "busy" ? ["작업 중", phase, speed].filter(Boolean).join(" · ") : "유휴" })
+        ]));
+      });
     },
 
     togglePip(forceState) {
@@ -2691,10 +2793,13 @@
             running: Array.isArray(data.running) ? data.running : [],
             pending: Array.isArray(data.pending) ? data.pending : [],
             recent: Array.isArray(data.recent) ? data.recent : [],
+            workers: Array.isArray(data.workers) ? data.workers : [],
+            workerContributionEnabled: Boolean(data.worker_contribution_enabled),
             summary: data.summary || { running_count: 0, pending_count: 0, total_active: 0 },
             engine: data.engine || { status: "offline", device: "", vram: "" }
           };
           this.render();
+          if (state.queue.workerContributionEnabled && !this.mineLoaded) this.loadMine();
         }
       } catch (err) {
         // Keep calm on transient network error
@@ -2702,7 +2807,10 @@
     },
 
     render() {
-      const { running, pending, recent, summary, engine } = state.queue;
+      const { running, pending, recent, summary, engine, workers = [] } = state.queue;
+      if (refs.workerContribute) refs.workerContribute.hidden = !state.queue.workerContributionEnabled;
+      this.renderWorkers(workers);
+      this.renderMine();
       const totalActive = summary.total_active || 0;
       const runningCount = summary.running_count || 0;
       const pendingCount = summary.pending_count || 0;

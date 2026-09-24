@@ -31,6 +31,15 @@ class ComfyProgressTests(unittest.TestCase):
         client._record_progress({"type": "progress", "data": {"prompt_id": "prompt-1", "node": "4", "value": -1, "max": 10}})
         self.assertIsNone(client.progress_for("prompt-1"))
 
+    def test_rendering_reports_iterations_per_second_for_ui_conversion(self) -> None:
+        client = ComfyClient()
+        client._progress_nodes["prompt-1"] = {"7": "rendering"}
+        with patch("yue2_app.comfy_client.time.monotonic", side_effect=[10.0, 12.0]):
+            client._record_progress({"type": "progress", "data": {"prompt_id": "prompt-1", "node": "7", "value": 1, "max": 10}})
+            client._record_progress({"type": "progress", "data": {"prompt_id": "prompt-1", "node": "7", "value": 2, "max": 10}})
+        self.assertEqual(client.progress_for("prompt-1"),
+                         {"phase": "rendering", "current": 2, "total": 10, "rate": 0.5})
+
 
 class WorkflowProgressTests(unittest.IsolatedAsyncioTestCase):
     async def test_original_and_cover_nodes_advance_through_three_stages(self) -> None:

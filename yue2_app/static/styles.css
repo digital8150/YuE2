@@ -1034,6 +1034,26 @@ body.is-playing .ambient-backdrop {
   font-size: 9px;
   font-weight: 800;
 }
+.queue-workers { display: grid; gap: 8px; }
+.queue-worker-row, .my-worker-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,.035); }
+.queue-worker-main { display: grid; gap: 4px; min-width: 0; }
+.queue-worker-main strong { overflow-wrap: anywhere; }
+.queue-worker-main small, .worker-contribute p, .worker-guide-hint { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.queue-worker-state { flex: 0 0 auto; font-size: 12px; font-weight: 700; color: var(--muted); }
+.queue-worker-state.is-busy { color: var(--accent); }
+.worker-contribute { padding: 16px; margin-bottom: 26px; border: 1px solid var(--border); border-radius: 14px; background: rgba(255,255,255,.035); }
+.worker-contribute h3 { font-size: 12px; margin: 18px 0 9px; }
+.worker-guide-link { display: inline-flex; padding: 9px 12px; margin: 8px 0 0; border: 1px solid var(--accent); border-radius: 8px; color: var(--accent); font-size: 12px; font-weight: 700; text-decoration: none; }
+.worker-create-form { display: grid; gap: 7px; margin-top: 16px; font-size: 12px; font-weight: 700; }
+.worker-create-form > div { display: flex; gap: 7px; }
+.worker-create-form input { min-width: 0; flex: 1; padding: 9px; border: 1px solid var(--border); border-radius: 8px; background: rgba(0,0,0,.2); color: var(--text); }
+.worker-create-form button, .worker-credential button, .my-worker-row button { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: rgba(255,255,255,.08); color: var(--text); cursor: pointer; font-size: 12px; }
+.worker-credential { margin-top: 12px; padding: 12px; border: 1px solid var(--accent); border-radius: 9px; }
+.worker-credential[hidden] { display: none; }
+.worker-credential pre { overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+#worker-form-status { color: var(--accent); font-size: 12px; }
+.my-worker-row { padding: 9px 10px; font-size: 12px; }
+.my-worker-row span { overflow-wrap: anywhere; }
 @media (max-width: 900px) {
   .queue-view-layout {
     grid-template-columns: 1fr;

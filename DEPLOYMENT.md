@@ -29,6 +29,8 @@ ssh oracle
 
 이 별칭은 `C:\Users\admin\.ssh\config`에 설정되어 있으며 `ubuntu@arcade.codingbot.kr`로 접속한다. 배포 파일 복사에도 `oracle:/home/ubuntu/services/yue-studio/` 경로를 사용한다.
 
+해당 서버에는 이 서비스 외에도 다양한 서비스가 함께 돌고 있으므로 다른 서비스를 건들이지 않도록 극도록 안전한 경로로 다뤄야 한다.
+
 ## 코드 동기화
 
 로컬 작업본에서 테스트를 통과시킨 뒤 변경 사항을 `main`에 커밋하고 `origin/main`에 푸시한다. Oracle의 애플리케이션 디렉터리는 Git 저장소가 아닌 배포본이므로, 변경된 서버 실행 파일과 정적 파일을 `scp`로 복사하고 해시를 비교한다. 배포본에 커밋 SHA를 `DEPLOYED_COMMIT`으로 기록해 저장소 버전과 대조한다. `venv/`, `secrets/`, `yue2_app/data/`는 코드 동기화 대상에서 제외한다.
@@ -44,7 +46,7 @@ ssh oracle
 | 서비스 환경 변수 | `/home/ubuntu/services/yue-studio/secrets/studio.env` |
 | PostgreSQL 컨테이너·볼륨 | `yue-studio-pg`, `yue-studio-pgdata` |
 
-환경 변수 파일에는 `YUE2_DATABASE_URL`, `YUE2_DISPATCH_DSN`, `YUE2_WORKER_TOKENS`, `YUE2_PUBLIC_ORIGIN`, `YUE2_SECURE_COOKIES`가 있다. 토큰과 DB 비밀번호를 Git에 넣지 않는다. 현재 웹 앱이 한 프로세스이므로 여러 프로세스로 늘리기 전에는 WebSocket 이벤트 전달 구조도 확장해야 한다.
+환경 변수 파일에는 `YUE2_DATABASE_URL`, `YUE2_DISPATCH_DSN`, `YUE2_PUBLIC_ORIGIN`, `YUE2_SECURE_COOKIES`가 있다. 기존 수동 등록 워커용 `YUE2_WORKER_TOKENS`는 선택 사항이며, 새 회원 워커의 키는 로그인 후 Studio에서 발급하고 PostgreSQL에 해시로 저장한다. 토큰과 DB 비밀번호를 Git에 넣지 않는다. 현재 웹 앱이 한 프로세스이므로 여러 프로세스로 늘리기 전에는 WebSocket 이벤트 전달 구조도 확장해야 한다.
 
 설정이나 코드 변경 후에는 YuE만 점검하고 재시작한다.
 
@@ -59,10 +61,10 @@ Apache 설정을 바꿀 때는 `sudo apache2ctl -t`가 성공한 뒤에만 `sudo
 
 ## Windows GPU 워커
 
-1. 이 저장소의 `venv`, `ComfyUI`, YuE2·SheetSage 모델을 준비한다. 모델 파일 이름은 `yue2_3b_bf16.safetensors`, `sheetsage2_bf16.safetensors`이다.
-2. 서버 관리자에게 워커 ID와 전용 토큰을 발급받아 서버의 `YUE2_WORKER_TOKENS`에 등록한다.
-3. 저장소 루트에 Git에서 제외되는 `.yue2-worker.local.bat`을 만들고 `set "YUE2_WORKER_ID=..."`, `set "YUE2_WORKER_TOKEN=..."`을 적는다.
-4. `run_yue2_worker.bat`을 실행한다. ComfyUI가 꺼져 있으면 로컬에서 띄운 뒤 작업을 기다린다. 종료하면 새 작업을 받지 않는다.
+1. Studio에 로그인해 **대기열 → 내 GPU 기여하기**에서 워커 이름을 정하고 연결 키를 발급받는다. 같은 화면에서 코딩 에이전트용 설치 가이드를 다운로드할 수 있다.
+2. 가이드에 따라 이 저장소의 `venv`, `ComfyUI`, YuE2·SheetSage 모델을 준비한다. 모델 파일 이름은 `yue2_3b_bf16.safetensors`, `sheetsage2_bf16.safetensors`이다.
+3. 발급 화면의 설정 세 줄을 저장소 루트의 `.yue2-worker.local.bat`에 저장한다. 이 파일은 Git에서 제외되며 토큰은 발급 시 한 번만 표시된다.
+4. `run_yue2_worker.bat`을 실행한다. ComfyUI가 꺼져 있으면 로컬에서 띄운 뒤 작업을 기다린다. 대기열에서 해당 워커가 **유휴**로 표시되는지 확인한다. 종료하면 새 작업을 받지 않는다.
 
 GPU 컴퓨터의 ComfyUI는 `127.0.0.1:8188`에만 바인딩한다. 작업 중에는 컴퓨터 절전과 ComfyUI 종료를 피한다. 워커가 연결이 끊겨도 중앙 작업은 보존되며, 임대 시간이 지난 작업은 다시 배정될 수 있다. 같은 작업의 늦게 도착한 결과는 수락하지 않는다.
 

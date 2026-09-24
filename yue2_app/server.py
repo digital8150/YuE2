@@ -982,9 +982,50 @@ def _worker_identity(request: web.Request) -> str | None:
     worker_id = request.headers.get("X-Yue-Worker", "")
     token = request.headers.get("Authorization", "").removeprefix("Bearer ")
     expected = request.app["worker_tokens"].get(worker_id)
-    if not expected or not hmac.compare_digest(token, expected):
+    dispatch = request.app.get("dispatch")
+    if not ((expected and hmac.compare_digest(token, expected)) or
+            (dispatch is not None and dispatch.authenticate(worker_id, token))):
         return None
     return worker_id
+
+
+async def list_my_workers(request: web.Request) -> web.Response:
+    dispatch = request.app.get("dispatch")
+    if dispatch is None:
+        return _error("GPU 워커 기능을 사용할 수 없습니다.", 503)
+    connected = {worker["worker_id"]: worker for worker in dispatch.workers()}
+    return web.json_response({"workers": [
+        {**record, "connection": connected.get(record["worker_id"], {}).get("status", "offline")}
+        for record in dispatch.credentials(request["user"].id)
+    ]})
+
+
+async def create_my_worker(request: web.Request) -> web.Response:
+    dispatch = request.app.get("dispatch")
+    if dispatch is None:
+        return _error("GPU 워커 기능을 사용할 수 없습니다.", 503)
+    try:
+        data = await request.json()
+    except Exception:
+        return _error("JSON 요청이 필요합니다.", 400)
+    name = str(data.get("name") or "").strip() if isinstance(data, dict) else ""
+    if not name or len(name) > 50 or any(ord(char) < 32 for char in name):
+        return _error("워커 이름은 1~50자로 입력하세요.", 400)
+    if len(dispatch.credentials(request["user"].id)) >= 5:
+        return _error("계정당 워커는 최대 5개까지 등록할 수 있습니다.", 409)
+    created = dispatch.create_credential(request["user"].id, name)
+    response = web.json_response(created, status=201)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+async def delete_my_worker(request: web.Request) -> web.Response:
+    dispatch = request.app.get("dispatch")
+    if dispatch is None:
+        return _error("GPU 워커 기능을 사용할 수 없습니다.", 503)
+    if not dispatch.revoke_credential(request["user"].id, request.match_info["worker_id"]):
+        return _error("워커를 찾을 수 없습니다.", 404)
+    return web.json_response({"ok": True})
 
 
 def _remove_source(app: web.Application, job_id: str) -> None:
@@ -1227,7 +1268,7 @@ async def get_queue_status(request: web.Request) -> web.Response:
 
     workers = request.app["dispatch"].workers() if request.app.get("dispatch") is not None else []
     if workers:
-        engine_status = "busy" if running_list else "idle"
+        engine_status = "busy" if any(worker.get("status") == "busy" for worker in workers) else "idle"
         device_name = workers[0]["device"]
         vram_summary = workers[0]["vram"]
 
@@ -1252,6 +1293,8 @@ async def get_queue_status(request: web.Request) -> web.Response:
         "running": running_list,
         "pending": pending_list,
         "recent": recent_jobs,
+        "workers": workers,
+        "worker_contribution_enabled": request.app.get("dispatch") is not None,
     })
 
 
@@ -1791,6 +1834,9 @@ def create_app(
     app.router.add_get("/api/events", job_events)
     app.router.add_get("/api/jobs/{job_id}", get_job)
     app.router.add_get("/api/queue", get_queue_status)
+    app.router.add_get("/api/my/workers", list_my_workers)
+    app.router.add_post("/api/my/workers", create_my_worker)
+    app.router.add_delete("/api/my/workers/{worker_id}", delete_my_worker)
     app.router.add_get("/api/library", library)
     app.router.add_get("/api/library/discover", library_discover)
     app.router.add_get("/api/library/charts", library_charts)

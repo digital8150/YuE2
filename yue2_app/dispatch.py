@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import secrets
+import hashlib
+import hmac
 from typing import Any
 
 
@@ -28,6 +30,13 @@ class DispatchStore:
                 worker_id text PRIMARY KEY, device text, vram text,
                 last_seen timestamptz NOT NULL DEFAULT now()
             )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS yue_worker_credentials (
+                worker_id text PRIMARY KEY, owner_id bigint NOT NULL,
+                name text NOT NULL, token_hash text NOT NULL,
+                created_at timestamptz NOT NULL DEFAULT now(),
+                revoked_at timestamptz
+            )""")
+            db.execute("CREATE INDEX IF NOT EXISTS yue_worker_credentials_owner ON yue_worker_credentials(owner_id)")
 
     def _connect(self):
         return self.psycopg.connect(self.dsn)
@@ -46,13 +55,15 @@ class DispatchStore:
                 device = excluded.device, vram = excluded.vram, last_seen = now()""", (worker_id, device[:150], vram[:80]))
             row = db.execute("""WITH chosen AS (
                 SELECT job_id FROM yue_dispatch
-                WHERE status = 'queued' OR (status = 'running' AND lease_until < now() AND attempts < 3)
+                WHERE (status = 'queued' OR (status = 'running' AND lease_until < now() AND attempts < 3))
+                AND NOT EXISTS (SELECT 1 FROM yue_dispatch active
+                    WHERE active.worker_id = %s AND active.status = 'running' AND active.lease_until > now())
                 ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1
             ) UPDATE yue_dispatch AS d SET status = 'running', worker_id = %s,
                 lease_token = %s, lease_until = now() + interval '10 minutes',
                 attempts = d.attempts + 1, progress = NULL, updated_at = now()
                 FROM chosen WHERE d.job_id = chosen.job_id
-                RETURNING d.job_id, d.payload, d.attempts""", (worker_id, token)).fetchone()
+                RETURNING d.job_id, d.payload, d.attempts""", (worker_id, worker_id, token)).fetchone()
         if row is None:
             return None
         return {"job_id": row[0], "payload": row[1], "attempts": row[2], "lease_token": token}
@@ -99,6 +110,44 @@ class DispatchStore:
 
     def workers(self) -> list[dict[str, str]]:
         with self._connect() as db:
-            rows = db.execute("""SELECT worker_id, device, vram FROM yue_workers
-                WHERE last_seen > now() - interval '2 minutes' ORDER BY worker_id""").fetchall()
-            return [{"worker_id": r[0], "device": r[1] or "", "vram": r[2] or ""} for r in rows]
+            rows = db.execute("""SELECT w.worker_id, COALESCE(c.name, w.worker_id), w.device, w.vram,
+                d.job_id, d.progress FROM yue_workers w
+                LEFT JOIN yue_worker_credentials c ON c.worker_id = w.worker_id
+                LEFT JOIN LATERAL (SELECT job_id, progress FROM yue_dispatch
+                    WHERE worker_id = w.worker_id AND status = 'running' AND lease_until > now()
+                    ORDER BY updated_at DESC LIMIT 1) d ON true
+                WHERE w.last_seen > now() - interval '2 minutes'
+                    AND (c.worker_id IS NULL OR c.revoked_at IS NULL)
+                ORDER BY c.name NULLS LAST, w.worker_id""").fetchall()
+            return [{"worker_id": r[0], "name": r[1], "device": r[2] or "",
+                     "vram": r[3] or "", "status": "busy" if r[4] else "idle",
+                     "progress": r[5] if r[4] else None} for r in rows]
+
+    def create_credential(self, owner_id: int, name: str) -> dict[str, str]:
+        worker_id = "gpu-" + secrets.token_hex(12)
+        token = secrets.token_urlsafe(32)
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        with self._connect() as db:
+            db.execute("""INSERT INTO yue_worker_credentials(worker_id, owner_id, name, token_hash)
+                VALUES (%s, %s, %s, %s)""", (worker_id, owner_id, name, digest))
+        return {"worker_id": worker_id, "name": name, "token": token}
+
+    def authenticate(self, worker_id: str, token: str) -> bool:
+        if not worker_id or not token:
+            return False
+        with self._connect() as db:
+            row = db.execute("""SELECT token_hash FROM yue_worker_credentials
+                WHERE worker_id = %s AND revoked_at IS NULL""", (worker_id,)).fetchone()
+        return bool(row and hmac.compare_digest(hashlib.sha256(token.encode()).hexdigest(), row[0]))
+
+    def credentials(self, owner_id: int) -> list[dict[str, str]]:
+        with self._connect() as db:
+            rows = db.execute("""SELECT worker_id, name FROM yue_worker_credentials
+                WHERE owner_id = %s AND revoked_at IS NULL ORDER BY created_at DESC""", (owner_id,)).fetchall()
+        return [{"worker_id": row[0], "name": row[1]} for row in rows]
+
+    def revoke_credential(self, owner_id: int, worker_id: str) -> bool:
+        with self._connect() as db:
+            result = db.execute("""UPDATE yue_worker_credentials SET revoked_at = now()
+                WHERE owner_id = %s AND worker_id = %s AND revoked_at IS NULL""", (owner_id, worker_id))
+            return result.rowcount == 1
