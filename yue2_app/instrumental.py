@@ -8,7 +8,7 @@ import re
 INSTRUMENTAL_LORA = "ar_lora_inst_v3abc_comfyui.safetensors"
 DEFAULT_INSTRUMENTAL_PLAN = "[instrumental]"
 _SECTION = re.compile(
-    r"\[(intro|verse|pre-chorus|chorus|bridge|outro)(?: ([0-9]+:[0-5][0-9])-([0-9]+:[0-5][0-9]))?\]",
+    r"\[(intro|verse|pre-chorus|chorus|bridge|outro)(?: [1-9][0-9]*)?(?: ([0-9]+:[0-5][0-9])-([0-9]+:[0-5][0-9]))?\]",
     re.IGNORECASE,
 )
 
@@ -24,6 +24,7 @@ def normalize_instrumental_plan(value: str) -> str:
         raise ValueError("instrumental plan has too many sections")
     timed: bool | None = None
     previous_end = -1
+    normalized_lines: list[str] = []
     for line in lines:
         match = _SECTION.fullmatch(line)
         if match is None:
@@ -38,7 +39,10 @@ def normalize_instrumental_plan(value: str) -> str:
             if start >= end or start < previous_end:
                 raise ValueError("instrumental section times must be ordered")
             previous_end = end
-    return "\n".join(lines)
+            normalized_lines.append(f"[{match.group(1)} {match.group(2)}-{match.group(3)}]")
+        else:
+            normalized_lines.append(f"[{match.group(1)}]")
+    return "\n".join(normalized_lines)
 
 
 def _seconds(value: str) -> int:

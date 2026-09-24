@@ -224,7 +224,7 @@ test('instrumental idea selects the switch and plans an exact 2:30 tag timeline'
   assert.deepEqual(translated, ['2분30초 타깃의 오케스트라 연주곡', 'Dawn Procession']);
 });
 
-test('timed instrumental plans remain as the model wrote them', () => {
+test('instrumental timelines are aligned with the target duration', () => {
   const draft = assistant.parseDraft(JSON.stringify({
     title: 'A New Path', style: 'orchestral, strings', instrumental: true,
     lyrics: '[intro 0:00-0:10]\n[verse 0:10-1:00]\n[outro 1:00-2:00]',
@@ -234,7 +234,7 @@ test('timed instrumental plans remain as the model wrote them', () => {
   assert.equal(draft.durationSeconds, 150);
   assert.equal(draft.maxDurationSeconds, 180);
   assert.match(draft.lyrics, /^\[intro 0:00-/);
-  assert.match(draft.lyrics, /\[outro 1:00-2:00\]$/);
+  assert.match(draft.lyrics, /\[outro \d+:\d\d-2:30\]$/);
   assert.equal(draft.lyrics.split('\n').length, 3);
   const vocal = assistant.parseDraft(JSON.stringify({
     title: 'Morning', style: 'soft pop, piano', instrumental: false, lyrics: '[Verse]\nHello', target_duration_seconds: 0
@@ -244,6 +244,40 @@ test('timed instrumental plans remain as the model wrote them', () => {
   assert.equal(assistant.maxDurationWithMargin(60), 90);
   assert.equal(assistant.maxDurationWithMargin(300), 360);
   assert.equal(assistant.maxDurationWithMargin(890), 900);
+});
+
+test('a malformed instrumental draft is repaired before it reaches generation', () => {
+  const draft = assistant.parseDraft(JSON.stringify({
+    title: '별빛 정원', style: 'EDM, 128 BPM, Korean traditional instruments, synth',
+    instrumental: true, target_duration_seconds: 120,
+    lyrics: '[Intro 0:00-0:05] \n[Verse 0:05-0:30] \n[Chorus 0:30-0:55] \n[Verse 0:55-1:20] \n[Chorus 1:20-0:45] \n[Bridge 1:45-1:50] \n[Chorus 2:10-2:30] \n[Outro 2:30-2:45]'
+  }));
+  assert.equal(draft.maxDurationSeconds, 150);
+  const lines = draft.lyrics.split('\n');
+  assert.equal(lines.length, 8);
+  let previousEnd = 0;
+  for (const line of lines) {
+    const match = line.match(/^\[(intro|verse|pre-chorus|chorus|bridge|outro) (\d+):([0-5]\d)-(\d+):([0-5]\d)\]$/);
+    assert.ok(match, line);
+    const start = Number(match[2]) * 60 + Number(match[3]);
+    const end = Number(match[4]) * 60 + Number(match[5]);
+    assert.equal(start, previousEnd);
+    assert.ok(end > start);
+    previousEnd = end;
+  }
+  assert.equal(previousEnd, 120);
+});
+
+test('numbered instrumental sections are sent as canonical section tags', () => {
+  const lyrics = '[Intro 0:00-0:05]\n[Verse 0:05-0:30]\n[Chorus 0:30-1:00]\n'
+    + '[Verse 1 1:00-1:25]\n[Chorus 1 1:25-1:50]\n[Outro 1:50-2:00]';
+  const draft = assistant.parseDraft(JSON.stringify({
+    title: '별빛 정원', style: 'EDM, 128 BPM, Korean traditional instruments',
+    instrumental: true, target_duration_seconds: 120, lyrics
+  }));
+  assert.equal(draft.lyrics,
+    '[intro 0:00-0:05]\n[verse 0:05-0:30]\n[chorus 0:30-1:00]\n'
+    + '[verse 1:00-1:25]\n[chorus 1:25-1:50]\n[outro 1:50-2:00]');
 });
 
 test('unsupported browser keeps manual editor available', async () => {

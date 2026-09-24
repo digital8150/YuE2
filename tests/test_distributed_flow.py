@@ -51,6 +51,20 @@ class MemoryDispatch:
 
 
 class DistributedFlowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_numbered_instrumental_sections_are_accepted(self):
+        form = FormData()
+        form.add_field("mode", "original")
+        form.add_field("style", "EDM, 128 BPM, Korean traditional instruments")
+        form.add_field("instrumental", "true")
+        form.add_field("duration", "150")
+        form.add_field("lyrics", "[Intro 0:00-0:05]\n[Verse 0:05-0:30]\n[Chorus 0:30-1:00]\n"
+                       "[Verse 1 1:00-1:25]\n[Chorus 1 1:25-1:50]\n[Outro 1:50-2:00]")
+        created = await self.client.post("/api/generations", data=form, headers={"X-Yue2-CSRF": self.csrf})
+        self.assertEqual(created.status, 202, await created.text())
+        job = self.dispatch.jobs[(await created.json())["id"]]["payload"]
+        self.assertIn("[verse 1:00-1:25]", job["lyrics"])
+        self.assertNotIn("[verse 1 ", job["lyrics"])
+
     async def test_instrumental_payload_is_normalized_for_worker(self):
         form = FormData()
         for key, value in {"mode": "original", "style": "ambient", "lyrics": "",

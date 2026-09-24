@@ -139,6 +139,11 @@ class WorkflowBuilderContractTests(unittest.TestCase):
         self.assertEqual(normalize_instrumental_plan("[Intro]\n[Verse]\n[Outro]"), "[intro]\n[verse]\n[outro]")
         self.assertEqual(normalize_instrumental_plan("[intro 0:00-0:15]\n[outro 0:15-0:30]"),
                          "[intro 0:00-0:15]\n[outro 0:15-0:30]")
+        self.assertEqual(normalize_instrumental_plan(
+            "[Intro 0:00-0:05]\n[Verse 0:05-0:30]\n[Chorus 0:30-1:00]\n"
+            "[Verse 1 1:00-1:25]\n[Chorus 1 1:25-1:50]\n[Outro 1:50-2:00]"),
+            "[intro 0:00-0:05]\n[verse 0:05-0:30]\n[chorus 0:30-1:00]\n"
+            "[verse 1:00-1:25]\n[chorus 1:25-1:50]\n[outro 1:50-2:00]")
         for invalid in ("[Verse]\nSing me a song", "[guitar solo]", "[intro 0:30-0:10]", "[instrumental]\n[chorus]"):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 normalize_instrumental_plan(invalid)

@@ -706,10 +706,43 @@
     const style = refs.styleInput.value.trim();
     if (state.instrumental) {
       const plan = refs.lyricsInput.value.trim();
-      const lines = plan.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-      const section = /^\[(intro|verse|pre-chorus|chorus|bridge|outro)(?: \d+:[0-5]\d-\d+:[0-5]\d)?\]$/i;
-      if (plan && !(lines.length === 1 && /^\[instrumental\]$/i.test(lines[0])) && (!lines.length || lines.some((line) => !section.test(line)))) {
-        showFormError("연주곡 구조에는 [instrumental] 또는 구간 태그만 입력해 주세요.");
+      const lines = plan.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).filter(Boolean);
+      const section = /^\[(intro|verse|pre-chorus|chorus|bridge|outro)(?: [1-9]\d*)?(?: (\d+:[0-5]\d)-(\d+:[0-5]\d))?\]$/i;
+      let planError = "";
+      if (lines.length && !(lines.length === 1 && /^\[instrumental\]$/i.test(lines[0]))) {
+        if (lines.length > 32) planError = "연주곡 구조는 구간을 32개 이하로 입력해 주세요.";
+        let timed = null;
+        let previousEnd = -1;
+        for (const line of lines) {
+          if (planError) break;
+          const match = line.match(section);
+          if (!match) {
+            planError = "연주곡 구조에는 [instrumental] 또는 구간 태그만 입력해 주세요.";
+            break;
+          }
+          const hasTimes = match[2] !== undefined;
+          if (timed !== null && timed !== hasTimes) {
+            planError = "연주곡 구간에는 시간 표시가 있는 태그와 없는 태그를 섞을 수 없어요.";
+            break;
+          }
+          timed = hasTimes;
+          if (hasTimes) {
+            const seconds = (value) => {
+              const [minutes, remainder] = value.split(":").map(Number);
+              return minutes * 60 + remainder;
+            };
+            const start = seconds(match[2]);
+            const end = seconds(match[3]);
+            if (start >= end || start < previousEnd) {
+              planError = "연주곡 구간 시간을 시작부터 끝까지 순서대로 입력해 주세요.";
+              break;
+            }
+            previousEnd = end;
+          }
+        }
+      }
+      if (planError) {
+        showFormError(planError);
         refs.lyricsInput.focus();
         return false;
       }
@@ -795,6 +828,9 @@
       if (error && error.status === 503) {
         showFormError("지금은 음악을 만들 수 없어요. 잠시 후 다시 시도해 주세요.");
         showToast("잠시 후 다시 시도해 주세요.", "error");
+      } else if (error && error.status === 400) {
+        showFormError(safeText(error.message, "입력값을 확인해 주세요."));
+        showToast("입력값을 확인해 주세요.", "error");
       } else {
         showFormError("요청을 보내지 못했어요. 잠시 후 다시 시도해 주세요.");
         showToast("요청을 보내지 못했어요.", "error");
