@@ -51,6 +51,25 @@ class MemoryDispatch:
 
 
 class DistributedFlowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_instrumental_payload_is_normalized_for_worker(self):
+        form = FormData()
+        for key, value in {"mode": "original", "style": "ambient", "lyrics": "",
+                           "instrumental": "true", "planning_enabled": "false"}.items():
+            form.add_field(key, value)
+        created = await self.client.post("/api/generations", data=form, headers={"X-Yue2-CSRF": self.csrf})
+        self.assertEqual(created.status, 202, await created.text())
+        job = self.dispatch.jobs[(await created.json())["id"]]["payload"]
+        self.assertEqual(job["lyrics"], "[instrumental]")
+        self.assertEqual(job["style"], "Instrumental, ambient")
+        self.assertTrue(job["instrumental"])
+        self.assertTrue(job["settings"]["planning_enabled"] is False)
+        bad = FormData()
+        for key, value in {"mode": "original", "style": "ambient", "lyrics": "sing this",
+                           "instrumental": "true"}.items():
+            bad.add_field(key, value)
+        rejected = await self.client.post("/api/generations", data=bad, headers={"X-Yue2-CSRF": self.csrf})
+        self.assertEqual(rejected.status, 400)
+
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
         repo = Repository(Path(self.temp.name) / "studio.sqlite3")

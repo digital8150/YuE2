@@ -7,10 +7,10 @@
     <meta name="description" content="YUE STUDIO 음악 생성 대시보드" />
     <title>YUE STUDIO</title>
     <link rel="icon" type="image/svg+xml" href="static/favicon.svg" />
-    <link rel="stylesheet" href="static/styles.css?v=20260924-backdrop" />
+    <link rel="stylesheet" href="static/styles.css?v=20260924-instrumental" />
     <script src="static/auth.js" defer></script>
-    <script src="static/prompt_assistant.js" defer></script>
-    <script src="static/app.js" defer></script>
+    <script src="static/prompt_assistant.js?v=20260924-instrumental" defer></script>
+    <script src="static/app.js?v=20260924-instrumental" defer></script>
     <script src="static/backoffice.js" defer></script>
   </head>
   <body>
@@ -180,6 +180,7 @@
                       </button>
                     </div>
                     <textarea class="text-area lyrics-area" id="lyrics-input" name="lyrics" rows="8" maxlength="6000" placeholder="어떤 이야기를 노래할까요?&#10;&#10;가사를 입력하거나, 연주곡으로 만들어 보세요."></textarea>
+                    <p class="instrumental-hint" id="instrumental-hint" hidden>연주곡 구조: [instrumental] 또는 [intro], [verse], [chorus], [bridge], [outro]를 한 줄씩 입력하세요. 가사와 연주 지시는 입력할 수 없습니다. 연주곡 LoRA와 ABC 계획이 적용됩니다.</p>
                     <div class="editor-foot"><span id="lyrics-count">0 / 6,000</span></div>
                   </div>
 

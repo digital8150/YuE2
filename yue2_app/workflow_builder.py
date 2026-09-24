@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .instrumental import INSTRUMENTAL_LORA, normalize_instrumental_plan
+
 
 YUE2_CHECKPOINT = "yue2_3b_bf16.safetensors"
 SHEETSAGE_CHECKPOINT = "sheetsage2_bf16.safetensors"
@@ -42,6 +44,7 @@ def build_workflow(
     source_filename: str | None = None,
     source_subfolder: str = "yue2_uploads",
     source_type: str = "input",
+    instrumental: bool = False,
 ) -> dict[str, dict[str, Any]]:
     """Return a ComfyUI API prompt for an original or cover generation.
 
@@ -55,6 +58,10 @@ def build_workflow(
         raise ValueError("unsupported generation mode")
     if mode == "cover" and not source_filename:
         raise ValueError("cover workflow requires an uploaded audio filename")
+    if instrumental:
+        lyrics = normalize_instrumental_plan(lyrics)
+        if mode == "original":
+            planning_enabled = True
 
     graph: dict[str, dict[str, Any]] = {}
     graph["1"] = {
@@ -65,6 +72,19 @@ def build_workflow(
         "class_type": "SeedNode",
         "inputs": {"seed": int(seed)},
     }
+    clip = _link("1", 1)
+    if instrumental:
+        graph["20"] = {
+            "class_type": "LoraLoader",
+            "inputs": {
+                "model": _link("1", 0),
+                "clip": clip,
+                "lora_name": INSTRUMENTAL_LORA,
+                "strength_model": 0.0,
+                "strength_clip": 1.0,
+            },
+        }
+        clip = _link("20", 1)
 
     music_id: str
     if mode == "original":
@@ -72,7 +92,7 @@ def build_workflow(
             graph["3"] = {
                 "class_type": "YuE2GenerateABC",
                 "inputs": {
-                    "clip": _link("1", 1),
+                    "clip": clip,
                     "style": style,
                     "lyrics": lyrics,
                     "seed": _link("2", 0),
@@ -107,7 +127,7 @@ def build_workflow(
             "inputs": {
                 "audio_encoder": _link("4", 0),
                 "audio": _link("3", 0),
-                "mode": "melody",
+                "mode": "full" if instrumental else "melody",
             },
         }
         graph["6"] = {
@@ -120,12 +140,12 @@ def build_workflow(
     graph[music_id] = {
         "class_type": "YuE2GenerateMusic",
         "inputs": {
-            "clip": _link("1", 1),
+            "clip": clip,
             "style": style,
             "lyrics": lyrics,
             "abc": abc,
             "seed": _link("2", 0),
-            "mode": "melody" if mode == "cover" else "full",
+            "mode": "full" if instrumental else "melody" if mode == "cover" else "full",
             "max_duration": float(duration),
             "min_duration": 0.0,
             "temperature": float(temperature),

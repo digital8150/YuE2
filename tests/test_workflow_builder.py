@@ -109,6 +109,40 @@ def _build_prompt(*, job_id: str, mode: str, planning: bool, uploaded_audio: str
 
 
 class WorkflowBuilderContractTests(unittest.TestCase):
+    def test_instrumental_lora_routes_clip_and_requires_abc(self) -> None:
+        builder = importlib.import_module("yue2_app.workflow_builder")
+        for mode, extra in (("original", {}), ("cover", {"source_filename": "reference.wav"})):
+            with self.subTest(mode=mode):
+                prompt = builder.build_workflow(
+                    "instrumental-test", mode, "ambient", "", planning_enabled=False,
+                    instrumental=True, **extra,
+                )
+                lora_id, lora = _one(prompt, "LoraLoader")
+                self.assertEqual(lora["inputs"]["lora_name"], "ar_lora_inst_v3abc_comfyui.safetensors")
+                self.assertEqual((lora["inputs"]["strength_model"], lora["inputs"]["strength_clip"]), (0.0, 1.0))
+                _, music = _one(prompt, "YuE2GenerateMusic")
+                self.assertEqual(music["inputs"]["lyrics"], "[instrumental]")
+                self.assertTrue(_is_ref(music["inputs"]["clip"], lora_id, 1))
+                self.assertEqual(music["inputs"]["mode"], "full")
+                if mode == "original":
+                    _, abc = _one(prompt, "YuE2GenerateABC")
+                    self.assertEqual(abc["inputs"]["lyrics"], "[instrumental]")
+                    self.assertTrue(_is_ref(abc["inputs"]["clip"], lora_id, 1))
+                    self.assertIsInstance(music["inputs"]["abc"], list)
+                else:
+                    _, source_abc = _one(prompt, "SheetSage2AudioToABC")
+                    self.assertEqual(source_abc["inputs"]["mode"], "full")
+
+    def test_instrumental_caption_rejects_sung_words(self) -> None:
+        from yue2_app.instrumental import normalize_instrumental_plan
+
+        self.assertEqual(normalize_instrumental_plan("[Intro]\n[Verse]\n[Outro]"), "[intro]\n[verse]\n[outro]")
+        self.assertEqual(normalize_instrumental_plan("[intro 0:00-0:15]\n[outro 0:15-0:30]"),
+                         "[intro 0:00-0:15]\n[outro 0:15-0:30]")
+        for invalid in ("[Verse]\nSing me a song", "[guitar solo]", "[intro 0:30-0:10]", "[instrumental]\n[chorus]"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                normalize_instrumental_plan(invalid)
+
     def test_original_planning_controls_abc_generator_and_common_inputs(self) -> None:
         for planning in (True, False):
             with self.subTest(planning=planning):

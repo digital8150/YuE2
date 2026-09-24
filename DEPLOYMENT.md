@@ -1,5 +1,14 @@
 # YuE Studio 배포
 
+## 연주곡 LoRA 배포 (2026-09-24)
+
+- 출처: [Mothersuperior/YuE2-instrumental-cot-full-loras](https://huggingface.co/Mothersuperior/YuE2-instrumental-cot-full-loras). 가중치 라이선스는 **CC BY-NC 4.0**이며 상업적 사용은 허용되지 않는다. 서비스 이용 조건에 맞는지 운영자가 확인한다.
+- GPU PC의 `ComfyUI/models/loras/`에 `ar_lora_inst_v3abc_comfyui.safetensors`를 설치한다. 공식 저장소의 **ComfyUI용** 파일을 사용하며 일반 `ar_lora_inst_v3abc.safetensors`와 혼동하지 않는다. 로컬 설치 파일 크기는 212,891,736바이트다. ComfyUI를 재시작하여 LoRA 목록에 나타나는지 확인한다.
+- 스튜디오가 `instrumental=true`를 받으면 서버가 가사 입력을 `[instrumental]` 또는 허용된 구간 태그로 정규화하고, 작업 페이로드에 연주곡 플래그를 보낸다. 워커는 ComfyUI `LoraLoader`를 CLIP 경로에 `strength_clip=1.0`, `strength_model=0.0`으로 연결한다. 원곡은 ABC 계획을 항상 생성하고 `mode=full`을 사용한다. 커버 연주곡도 SheetSage ABC와 음악 생성에 `mode=full`을 사용한다. 일반 곡의 그래프는 기존대로다.
+- 구간 태그는 `intro`, `verse`, `pre-chorus`, `chorus`, `bridge`, `outro`만 허용한다. 한 줄에 하나씩 쓰거나 `[intro 0:00-0:15]`처럼 순서대로 시간을 지정한다. 가창 가사와 제작 지시문은 연주곡 가사 필드에 넣지 않는다. 시간은 곡 길이의 보장이 아니라 구조 가이드다.
+- 배포 순서: 저장소 테스트 → `main` 커밋과 푸시 → Oracle의 `yue2_app/` 변경 파일과 `DEPLOYMENT.md`를 `scp`로 복사 → `yue-studio.service` 재시작 → GPU PC에서 최신 워커 코드와 LoRA 파일 확인 후 ComfyUI 및 워커 재시작. 웹앱과 워커를 함께 갱신해 새 작업 플래그가 끝까지 전달되게 한다.
+- 확인: `python -m unittest tests.test_workflow_builder tests.test_distributed_flow -q`, `node --check yue2_app/static/app.js`, `curl -fsS https://yue.codingbot.kr/api/auth/setup-status`. 실제 연주곡 한 건을 제출해 ComfyUI 프롬프트에 `LoraLoader`, `[instrumental]`, `YuE2GenerateABC`, `mode=full`이 들어가는지 확인한다. 가창 곡에는 LoRA가 없어야 한다.
+
 ## 현재 구성
 
 - `https://yue.codingbot.kr` → Oracle의 Apache2 vhost → `127.0.0.1:7860`의 `aiohttp` 앱

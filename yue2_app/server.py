@@ -33,6 +33,7 @@ from .comfy_client import (
 from .repository import Job, Repository
 from .audio_metadata import prompt_from_mp3, recipe_from_prompt
 from .workflow_builder import build_workflow
+from .instrumental import normalize_instrumental_plan
 from .dispatch import DispatchStore
 
 
@@ -68,6 +69,7 @@ class GenerationInput:
     title: str
     style: str
     lyrics: str
+    instrumental: bool
     duration: float
     seed: int
     temperature: float
@@ -91,6 +93,7 @@ class GenerationInput:
             "top_p": self.top_p,
             "top_k": self.top_k,
             "repetition_penalty": self.repetition_penalty,
+            "instrumental": self.instrumental,
         }
         if self.mode == "original":
             values.update(
@@ -241,7 +244,15 @@ async def _parse_generation_request(request: web.Request) -> GenerationInput:
         raise RequestInputError(INPUT_ERROR)
     if mode == "cover" and source_path is None:
         raise RequestInputError(UPLOAD_ERROR)
+    instrumental = _parse_bool(fields.get("instrumental"), False)
     lyrics = fields.get("lyrics", "")
+    if instrumental:
+        if not re.search(r"\binstrumental\b", style, re.IGNORECASE):
+            style = f"Instrumental, {style}"
+        try:
+            lyrics = normalize_instrumental_plan(lyrics)
+        except ValueError as error:
+            raise RequestInputError(str(error)) from error
     title = fields.get("title", "").strip() or ("새로운 커버" if mode == "cover" else "새로운 트랙")
     duration = float(
         _parse_number(
@@ -319,6 +330,7 @@ async def _parse_generation_request(request: web.Request) -> GenerationInput:
         title=title,
         style=style,
         lyrics=lyrics,
+        instrumental=instrumental,
         duration=duration,
         seed=seed,
         temperature=temperature,
@@ -880,6 +892,7 @@ async def create_generation(request: web.Request) -> web.Response:
             mode=generation.mode,
             style=generation.style,
             lyrics=generation.lyrics,
+            instrumental=generation.instrumental,
             duration=generation.duration,
             seed=generation.seed,
             temperature=generation.temperature,
@@ -949,6 +962,7 @@ async def _create_distributed_generation(request: web.Request, generation: Gener
         )
         app["dispatch"].enqueue(job_id, {
             "mode": generation.mode, "style": generation.style, "lyrics": generation.lyrics,
+            "instrumental": generation.instrumental,
             "seed": generation.seed, "settings": generation.settings,
             "source_filename": generation.source_filename, "source_name": source_name,
         })

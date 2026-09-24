@@ -153,6 +153,7 @@
     view: getViewFromHash(),
     mode: "original",
     instrumental: false,
+    vocalLyrics: "",
     seedRandom: true,
     planEnabled: true,
     audioFile: null,
@@ -477,6 +478,7 @@
       version: 1,
       mode: state.mode,
       instrumental: state.instrumental,
+      vocalLyrics: state.vocalLyrics,
       randomSeed: refs.randomSeed.checked,
       planEnabled: state.planEnabled,
       advancedOpen: refs.advancedPanel.open,
@@ -525,7 +527,14 @@
       refs.planToggle.classList.toggle("is-on", snapshot.planEnabled);
     }
     syncPlanState();
-    if (typeof snapshot.instrumental === "boolean") setInstrumental(snapshot.instrumental);
+    if (typeof snapshot.instrumental === "boolean") {
+      const restoredLyrics = refs.lyricsInput.value;
+      setInstrumental(snapshot.instrumental);
+      if (snapshot.instrumental) {
+        refs.lyricsInput.value = restoredLyrics || "[instrumental]";
+        state.vocalLyrics = typeof snapshot.vocalLyrics === "string" ? snapshot.vocalLyrics : "";
+      }
+    }
     if (typeof snapshot.advancedOpen === "boolean") refs.advancedPanel.open = snapshot.advancedOpen;
     updateLyricsCount();
   }
@@ -600,10 +609,19 @@
   }
 
   function setInstrumental(enabled, refreshPromptSupport = true) {
+    if (enabled !== state.instrumental) {
+      if (enabled) {
+        state.vocalLyrics = refs.lyricsInput.value;
+        refs.lyricsInput.value = "[instrumental]";
+      } else {
+        refs.lyricsInput.value = state.vocalLyrics;
+      }
+    }
     state.instrumental = enabled;
     refs.instrumentalToggle.setAttribute("aria-checked", String(enabled));
     refs.instrumentalToggle.classList.toggle("is-on", enabled);
-    refs.lyricsInput.disabled = enabled;
+    refs.lyricsInput.placeholder = enabled ? "[instrumental]\n\n또는 [intro], [verse], [chorus], [outro]를 한 줄씩 입력하세요." : "가사를 입력하세요.";
+    document.getElementById("instrumental-hint").hidden = !enabled;
     updateLyricsCount();
     if (promptAssistant && refreshPromptSupport) void promptAssistant.checkSupport();
     saveComposer();
@@ -611,6 +629,7 @@
 
   function updateLyricsCount() {
     refs.lyricsCount.textContent = `${refs.lyricsInput.value.length.toLocaleString("ko-KR")} / 6,000`;
+    if (state.instrumental) saveComposer();
   }
 
   function clearFieldError(input, errorNode) {
@@ -685,6 +704,16 @@
     clearFieldError(refs.styleInput, refs.styleError);
     clearFieldError(refs.audioFile, refs.audioError);
     const style = refs.styleInput.value.trim();
+    if (state.instrumental) {
+      const plan = refs.lyricsInput.value.trim();
+      const lines = plan.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      const section = /^\[(intro|verse|pre-chorus|chorus|bridge|outro)(?: \d+:[0-5]\d-\d+:[0-5]\d)?\]$/i;
+      if (plan && !(lines.length === 1 && /^\[instrumental\]$/i.test(lines[0])) && (!lines.length || lines.some((line) => !section.test(line)))) {
+        showFormError("연주곡 구조에는 [instrumental] 또는 구간 태그만 입력해 주세요.");
+        refs.lyricsInput.focus();
+        return false;
+      }
+    }
     if (!style) {
       showFieldError(refs.styleInput, refs.styleError, "사운드 스타일을 적어주세요.");
       refs.styleInput.focus();
@@ -711,7 +740,7 @@
     formData.append("mode", state.mode);
     formData.append("title", refs.trackTitle.value.trim());
     formData.append("style", refs.styleInput.value.trim());
-    formData.append("lyrics", state.instrumental ? "" : refs.lyricsInput.value.trim());
+    formData.append("lyrics", state.instrumental ? (refs.lyricsInput.value.trim() || "[instrumental]") : refs.lyricsInput.value.trim());
     formData.append("instrumental", String(state.instrumental));
     formData.append("duration", refs.durationInput.value || defaults[state.mode].duration);
     formData.append("random_seed", String(state.seedRandom));
@@ -1923,9 +1952,9 @@
       setMode(recipe.mode);
       refs.trackTitle.value = recipe.title || "";
       refs.styleInput.value = recipe.style || "";
-      refs.lyricsInput.value = recipe.lyrics || "";
-      setInstrumental(!recipe.lyrics);
       const settings = recipe.settings || {};
+      setInstrumental(Boolean(settings.instrumental) || !recipe.lyrics);
+      refs.lyricsInput.value = recipe.lyrics || (state.instrumental ? "[instrumental]" : "");
       const values = {
         "duration-input": settings.duration,
         "temperature-input": settings.temperature,
@@ -3012,7 +3041,7 @@
         setInstrumental(!lyrics, false);
         refs.trackTitle.value = title;
         refs.styleInput.value = style;
-        refs.lyricsInput.value = lyrics;
+        refs.lyricsInput.value = lyrics || (state.instrumental ? "[instrumental]" : "");
         clearFieldError(refs.styleInput, refs.styleError);
         updateLyricsCount();
         saveComposer();

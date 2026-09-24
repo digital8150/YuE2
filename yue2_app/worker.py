@@ -79,10 +79,12 @@ class Worker:
     async def _execute(self, job: dict) -> None:
         payload = job["payload"]
         source = await self._source(job)
-        settings = payload["settings"]
+        settings = dict(payload["settings"])
+        instrumental = bool(payload.get("instrumental", settings.pop("instrumental", False)))
+        settings.pop("instrumental", None)
         graph = build_workflow(
             job_id=job["job_id"], mode=payload["mode"], style=payload["style"],
-            lyrics=payload.get("lyrics") or "", seed=payload["seed"],
+            lyrics=payload.get("lyrics") or "", instrumental=instrumental, seed=payload["seed"],
             source_filename=source[0] if source else None,
             source_subfolder=source[1] if source else "yue2_uploads",
             **settings,

@@ -129,6 +129,7 @@ body:not(.is-authenticated) [data-view-link="backoffice"] { display: none !impor
 .text-input::placeholder, .text-area::placeholder { color: #86838b; opacity: 1; }
 .text-input:disabled, .text-area:disabled { color: var(--faint); opacity: .5; cursor: not-allowed; }
 .lyrics-area { min-height: clamp(180px,26vh,310px); }
+.instrumental-hint { margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .style-area { min-height: 92px; height: 92px; }
 .editor-foot { display: flex; justify-content: space-between; gap: 8px; color: var(--faint); font-size: 9px; letter-spacing: .025em; }
 .editor-foot > :first-child { letter-spacing: .08em; font-size: 8px; }
