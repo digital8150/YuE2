@@ -214,11 +214,12 @@ test('instrumental idea selects the switch and plans an exact 2:30 tag timeline'
   await get('#prompt-generate').emit('click');
   assert.match(promptText, /Current instrumental switch: off/);
   assert.match(promptText, /Target duration: 2:30 \(150 seconds\)/);
-  assert.match(get('#prompt-result-mode').textContent, /연주곡.*2:30/);
+  assert.match(get('#prompt-result-mode').textContent, /연주곡.*2:30.*3:00/);
   assert.match(get('#prompt-result-lyrics').textContent, /\[outro 2:05-2:30\]$/);
   get('#prompt-apply').emit('click');
   assert.equal(applied.instrumental, true);
   assert.equal(applied.durationSeconds, 150);
+  assert.equal(applied.maxDurationSeconds, 180);
   assert.equal(applied.lyrics.split('\n').length, 6);
   assert.deepEqual(translated, ['2분30초 타깃의 오케스트라 연주곡', 'Dawn Procession']);
 });
@@ -235,6 +236,7 @@ test('timed instrumental plans keep musical sections and correct an invalid end 
   }), { language: 'en', instrumental: false, targetDurationSeconds: 150 });
   assert.equal(draft.instrumental, true);
   assert.equal(draft.durationSeconds, 150);
+  assert.equal(draft.maxDurationSeconds, 180);
   assert.match(draft.lyrics, /^\[intro 0:00-/);
   assert.match(draft.lyrics, /\[outro .*?-2:30\]$/);
   assert.equal(draft.lyrics.split('\n').length, 3);
@@ -246,6 +248,9 @@ test('timed instrumental plans keep musical sections and correct an invalid end 
   const untimed = assistant.normalizeInstrumentalPlan('[Intro]\n[Chorus]\n[Outro]');
   assert.equal(untimed.lyrics, '[intro]\n[chorus]\n[outro]');
   assert.equal(untimed.durationSeconds, null);
+  assert.equal(assistant.maxDurationWithMargin(60), 90);
+  assert.equal(assistant.maxDurationWithMargin(300), 360);
+  assert.equal(assistant.maxDurationWithMargin(890), 900);
 });
 
 test('unsupported browser keeps manual editor available', async () => {
