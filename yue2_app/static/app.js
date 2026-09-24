@@ -1001,6 +1001,7 @@
       }
       QueueManager.applyProgress(id, progress);
     }
+    if (updates.length) QueueManager.refreshSoon();
   }
 
   async function loadMoreJobs() {
@@ -2610,6 +2611,7 @@
 
   const QueueManager = {
     refreshTimer: null,
+    pollTimer: null,
     requestId: 0,
     myWorkers: [],
     mineLoaded: false,
@@ -2681,6 +2683,9 @@
       refs.workerCopyConfig?.addEventListener("click", async () => {
         try { await navigator.clipboard.writeText(refs.workerConfig.textContent); showToast("워커 설정을 복사했습니다."); }
         catch { showToast("복사할 수 없습니다. 설정을 직접 선택해 복사하세요.", "error"); }
+      });
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) this.poll();
       });
     },
 
@@ -2768,6 +2773,17 @@
       }, 150);
     },
 
+    schedulePoll() {
+      if (this.pollTimer) window.clearTimeout(this.pollTimer);
+      const active = (state.queue.summary?.total_active || 0) > 0
+        || (state.queue.workers || []).some((worker) => worker.status === "busy");
+      const delay = document.hidden ? 30000 : active ? 5000 : 10000;
+      this.pollTimer = window.setTimeout(() => {
+        this.pollTimer = null;
+        this.poll();
+      }, delay);
+    },
+
     applyProgress(id, progress) {
       const job = state.queue.running.find((item) => item.id === id);
       if (!job) return;
@@ -2784,6 +2800,10 @@
 
     async poll() {
       if (!window.yue2Auth?.ready) return;
+      if (this.pollTimer) {
+        window.clearTimeout(this.pollTimer);
+        this.pollTimer = null;
+      }
       const requestId = ++this.requestId;
       try {
         const data = await fetchJson("/api/queue");
@@ -2803,6 +2823,8 @@
         }
       } catch (err) {
         // Keep calm on transient network error
+      } finally {
+        this.schedulePoll();
       }
     },
 
