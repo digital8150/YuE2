@@ -167,11 +167,19 @@ class Worker:
                     try:
                         await self._execute(job)
                         print("Completed job", job["job_id"], flush=True)
+                    except (asyncio.CancelledError, KeyboardInterrupt):
+                        print("Worker interrupted, requeuing job", job["job_id"], flush=True)
+                        try:
+                            await self._post(f"/api/worker/jobs/{job['job_id']}/requeue",
+                                             {"lease_token": job["lease_token"]})
+                        except Exception:
+                            pass
+                        raise
                     except Exception as error:
-                        print("Job failed", job["job_id"], type(error).__name__, flush=True)
+                        print("Job failed, returning to queue", job["job_id"], type(error).__name__, flush=True)
                         try:
                             await self._post(f"/api/worker/jobs/{job['job_id']}/fail",
-                                             {"lease_token": job["lease_token"]})
+                                             {"lease_token": job["lease_token"], "requeue": True})
                         except (aiohttp.ClientError, asyncio.TimeoutError):
                             pass
             finally:

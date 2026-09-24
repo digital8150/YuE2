@@ -28,10 +28,11 @@ class MemoryDispatch:
         self.connected[worker_id] = {"worker_id": worker_id, "name": self.records.get(worker_id, {}).get("name", worker_id),
                                      "device": device, "vram": vram, "status": "idle", "progress": None}
         for job_id, job in self.jobs.items():
-            if job["status"] == "queued":
-                job.update(status="running", worker_id=worker_id, token="lease")
+            if job["status"] == "queued" or (job["status"] == "running" and job.get("stale") and job.get("attempts", 0) < 3):
+                attempts = job.get("attempts", 0) + 1
+                job.update(status="running", worker_id=worker_id, token="lease", attempts=attempts, stale=False)
                 self.connected[worker_id]["status"] = "busy"
-                return {"job_id": job_id, "payload": job["payload"], "attempts": 1, "lease_token": "lease"}
+                return {"job_id": job_id, "payload": job["payload"], "attempts": attempts, "lease_token": "lease"}
         return None
 
     def heartbeat(self, job_id, worker_id, token, progress=None):
@@ -43,6 +44,38 @@ class MemoryDispatch:
                 job["progress"] = progress
         return valid
 
+    def cancel(self, job_id):
+        job = self.jobs.get(job_id)
+        if job and job["status"] == "queued":
+            job["status"] = "cancelled"
+            return True
+        return False
+
+    def requeue(self, job_id, worker_id, token):
+        if not self.heartbeat(job_id, worker_id, token):
+            return False, "invalid"
+        job = self.jobs[job_id]
+        attempts = job.get("attempts", 1)
+        if worker_id in self.connected:
+            self.connected[worker_id].update(status="idle", progress=None)
+        if attempts < 3:
+            job.update(status="queued", worker_id=None, token=None, progress=None)
+            return True, "requeued"
+        else:
+            job.update(status="failed", worker_id=None, token=None, progress=None)
+            return True, "failed"
+
+    def requeue_stale(self):
+        requeued = []
+        for job_id, job in self.jobs.items():
+            if job.get("status") == "running" and job.get("stale") and job.get("attempts", 1) < 3:
+                worker_id = job.get("worker_id")
+                if worker_id and worker_id in self.connected:
+                    self.connected[worker_id].update(status="idle", progress=None)
+                job.update(status="queued", worker_id=None, token=None, progress=None, stale=False)
+                requeued.append(job_id)
+        return requeued
+
     def finish(self, job_id, worker_id, token, status, output_filename=None):
         if not self.heartbeat(job_id, worker_id, token):
             return False
@@ -51,6 +84,10 @@ class MemoryDispatch:
         if worker_id in self.connected:
             self.connected[worker_id].update(status="idle", progress=None)
         return True
+
+    def status(self, job_id):
+        job = self.jobs.get(job_id)
+        return (job["status"], job.get("worker_id")) if job else None
 
     def workers(self):
         return list(self.connected.values())
@@ -83,11 +120,19 @@ class MemoryDispatch:
         return True
 
     def expired(self):
-        return []
+        failed = []
+        for job_id, job in self.jobs.items():
+            if job.get("status") == "running" and job.get("stale") and job.get("attempts", 1) >= 3:
+                worker_id = job.get("worker_id")
+                if worker_id and worker_id in self.connected:
+                    self.connected[worker_id].update(status="idle", progress=None)
+                job.update(status="failed", worker_id=None, token=None, progress=None, stale=False)
+                failed.append(job_id)
+        return failed
 
     def terminal(self):
         return [(key, value["status"], value.get("output_filename")) for key, value in self.jobs.items()
-                if value["status"] in {"completed", "failed"}]
+                if value["status"] in {"completed", "failed", "cancelled"}]
 
 
 class DistributedFlowTests(unittest.IsolatedAsyncioTestCase):
@@ -243,6 +288,129 @@ class DistributedFlowTests(unittest.IsolatedAsyncioTestCase):
                                         json={"lease_token": "lease"}, headers=self.worker_headers)
         self.assertEqual(failed.status, 200)
         self.assertFalse(list((Path(self.temp.name) / "sources").iterdir()))
+
+    async def test_user_can_cancel_queued_generation_but_not_running(self):
+        auth = self.client.server.app["auth"]
+        auth.create_user("user1", "User 1", "strong-password-123", status="approved")
+        auth.create_user("user2", "User 2", "strong-password-123", status="approved")
+        
+        # 1. user1 logs in and creates job
+        login1 = await self.client.post("/api/auth/login", json={"username": "user1", "password": "strong-password-123"})
+        csrf1 = (await login1.json())["csrf_token"]
+        form = FormData()
+        form.add_field("mode", "original")
+        form.add_field("style", "ambient")
+        form.add_field("lyrics", "cancel me")
+        form.add_field("planning_enabled", "false")
+        res = await self.client.post("/api/generations", data=form, headers={"X-Yue2-CSRF": csrf1})
+        self.assertEqual(res.status, 202)
+        job_id = (await res.json())["id"]
+
+        # 2. user2 logs in, cannot cancel user1's job
+        login2 = await self.client.post("/api/auth/login", json={"username": "user2", "password": "strong-password-123"})
+        csrf2 = (await login2.json())["csrf_token"]
+        forbidden = await self.client.post(f"/api/jobs/{job_id}/cancel", headers={"X-Yue2-CSRF": csrf2})
+        self.assertEqual(forbidden.status, 403)
+
+        # 3. user1 logs back in, successfully cancels queued job
+        login1 = await self.client.post("/api/auth/login", json={"username": "user1", "password": "strong-password-123"})
+        csrf1 = (await login1.json())["csrf_token"]
+        cancelled = await self.client.post(f"/api/jobs/{job_id}/cancel", headers={"X-Yue2-CSRF": csrf1})
+        self.assertEqual(cancelled.status, 200)
+        self.assertEqual((await cancelled.json())["status"], "cancelled")
+        self.assertEqual(self.dispatch.jobs[job_id]["status"], "cancelled")
+
+        # 4. Cannot cancel already cancelled job
+        repeat = await self.client.post(f"/api/jobs/{job_id}/cancel", headers={"X-Yue2-CSRF": csrf1})
+        self.assertEqual(repeat.status, 400)
+
+        # 5. Create another job and claim it -> running job cannot be cancelled
+        res2 = await self.client.post("/api/generations", data=form, headers={"X-Yue2-CSRF": csrf1})
+        job_id2 = (await res2.json())["id"]
+        claimed = await self.client.post("/api/worker/claim", json={}, headers=self.worker_headers)
+        self.assertEqual(claimed.status, 200)
+        self.assertEqual((await claimed.json())["job"]["job_id"], job_id2)
+
+        running_cancel = await self.client.post(f"/api/jobs/{job_id2}/cancel", headers={"X-Yue2-CSRF": csrf1})
+        self.assertEqual(running_cancel.status, 409)
+        self.assertIn("진행 중인 작업은 취소할 수 없습니다", (await running_cancel.json())["error"])
+
+    async def test_worker_explicit_interruption_requeues_job(self):
+        form = FormData()
+        form.add_field("mode", "original")
+        form.add_field("style", "ambient")
+        form.add_field("lyrics", "retry me")
+        form.add_field("planning_enabled", "false")
+        res = await self.client.post("/api/generations", data=form, headers={"X-Yue2-CSRF": self.csrf})
+        job_id = (await res.json())["id"]
+
+        # Claim 1
+        claimed = await self.client.post("/api/worker/claim", json={}, headers=self.worker_headers)
+        self.assertEqual((await claimed.json())["job"]["job_id"], job_id)
+
+        # Explicit failure with requeue=True
+        interrupted = await self.client.post(f"/api/worker/jobs/{job_id}/fail",
+                                             json={"lease_token": "lease", "requeue": True},
+                                             headers=self.worker_headers)
+        self.assertEqual(interrupted.status, 200)
+        self.assertEqual((await interrupted.json())["status"], "queued")
+
+        # Job in repo and dispatch should be queued
+        job_info = await self.client.get(f"/api/jobs/{job_id}")
+        self.assertEqual((await job_info.json())["status"], "queued")
+        self.assertEqual(self.dispatch.jobs[job_id]["status"], "queued")
+
+        # Claim 2 - worker should be able to claim it again
+        claimed2 = await self.client.post("/api/worker/claim", json={}, headers=self.worker_headers)
+        self.assertEqual((await claimed2.json())["job"]["job_id"], job_id)
+        self.assertEqual((await claimed2.json())["job"]["attempts"], 2)
+
+        # Requeue again via dedicated requeue endpoint
+        requeued2 = await self.client.post(f"/api/worker/jobs/{job_id}/requeue",
+                                           json={"lease_token": "lease"},
+                                           headers=self.worker_headers)
+        self.assertEqual(requeued2.status, 200)
+        self.assertEqual((await requeued2.json())["status"], "queued")
+
+        # Claim 3 - 3rd attempt
+        claimed3 = await self.client.post("/api/worker/claim", json={}, headers=self.worker_headers)
+        self.assertEqual((await claimed3.json())["job"]["job_id"], job_id)
+        self.assertEqual((await claimed3.json())["job"]["attempts"], 3)
+
+        # 3rd failure with requeue=True should become permanent failure
+        final_fail = await self.client.post(f"/api/worker/jobs/{job_id}/fail",
+                                            json={"lease_token": "lease", "requeue": True},
+                                            headers=self.worker_headers)
+        self.assertEqual(final_fail.status, 200)
+        self.assertEqual((await final_fail.json())["status"], "failed")
+        job_info3 = await self.client.get(f"/api/jobs/{job_id}")
+        self.assertEqual((await job_info3.json())["status"], "failed")
+
+    async def test_dead_worker_heartbeat_timeout_requeues_job(self):
+        form = FormData()
+        form.add_field("mode", "original")
+        form.add_field("style", "ambient")
+        form.add_field("lyrics", "stale worker")
+        form.add_field("planning_enabled", "false")
+        res = await self.client.post("/api/generations", data=form, headers={"X-Yue2-CSRF": self.csrf})
+        job_id = (await res.json())["id"]
+
+        # Worker claims job
+        claimed = await self.client.post("/api/worker/claim", json={}, headers=self.worker_headers)
+        self.assertEqual((await claimed.json())["job"]["job_id"], job_id)
+
+        # Worker dies without heartbeat (stale)
+        self.dispatch.jobs[job_id]["stale"] = True
+
+        # Reconcile triggers requeue_stale
+        requeued = self.dispatch.requeue_stale()
+        self.assertEqual(requeued, [job_id])
+        self.assertEqual(self.dispatch.jobs[job_id]["status"], "queued")
+
+        # Sync repository and check status
+        self.client.server.app["repository"].set_status(job_id, "queued")
+        job_info = await self.client.get(f"/api/jobs/{job_id}")
+        self.assertEqual((await job_info.json())["status"], "queued")
 
 
 if __name__ == "__main__":

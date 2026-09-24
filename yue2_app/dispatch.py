@@ -60,7 +60,7 @@ class DispatchStore:
                     WHERE active.worker_id = %s AND active.status = 'running' AND active.lease_until > now())
                 ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1
             ) UPDATE yue_dispatch AS d SET status = 'running', worker_id = %s,
-                lease_token = %s, lease_until = now() + interval '10 minutes',
+                lease_token = %s, lease_until = now() + interval '60 seconds',
                 attempts = d.attempts + 1, progress = NULL, updated_at = now()
                 FROM chosen WHERE d.job_id = chosen.job_id
                 RETURNING d.job_id, d.payload, d.attempts""", (worker_id, worker_id, token)).fetchone()
@@ -72,12 +72,45 @@ class DispatchStore:
         from psycopg.types.json import Jsonb
 
         with self._connect() as db:
-            result = db.execute("""UPDATE yue_dispatch SET lease_until = now() + interval '10 minutes',
+            result = db.execute("""UPDATE yue_dispatch SET lease_until = now() + interval '60 seconds',
                 progress = COALESCE(%s, progress), updated_at = now()
                 WHERE job_id = %s AND worker_id = %s AND lease_token = %s AND status = 'running'
                 AND lease_until > now()""", (Jsonb(progress) if progress is not None else None, job_id, worker_id, token))
             db.execute("UPDATE yue_workers SET last_seen = now() WHERE worker_id = %s", (worker_id,))
             return result.rowcount == 1
+
+    def cancel(self, job_id: str) -> bool:
+        with self._connect() as db:
+            result = db.execute("""UPDATE yue_dispatch SET status = 'cancelled', updated_at = now()
+                WHERE job_id = %s AND status = 'queued'""", (job_id,))
+            return result.rowcount == 1
+
+    def requeue(self, job_id: str, worker_id: str, token: str) -> tuple[bool, str]:
+        with self._connect() as db:
+            row = db.execute("""SELECT attempts FROM yue_dispatch
+                WHERE job_id = %s AND worker_id = %s AND lease_token = %s
+                AND status = 'running' AND lease_until > now()""", (job_id, worker_id, token)).fetchone()
+            if row is None:
+                return False, "invalid"
+            attempts = row[0]
+            if attempts < 3:
+                db.execute("""UPDATE yue_dispatch SET status = 'queued', worker_id = NULL,
+                    lease_token = NULL, lease_until = NULL, progress = NULL, updated_at = now()
+                    WHERE job_id = %s""", (job_id,))
+                return True, "requeued"
+            else:
+                db.execute("""UPDATE yue_dispatch SET status = 'failed', worker_id = NULL,
+                    lease_token = NULL, lease_until = NULL, updated_at = now()
+                    WHERE job_id = %s""", (job_id,))
+                return True, "failed"
+
+    def requeue_stale(self) -> list[str]:
+        with self._connect() as db:
+            rows = db.execute("""UPDATE yue_dispatch SET status = 'queued',
+                worker_id = NULL, lease_token = NULL, lease_until = NULL, progress = NULL, updated_at = now()
+                WHERE status = 'running' AND lease_until < now() AND attempts < 3
+                RETURNING job_id""").fetchall()
+            return [row[0] for row in rows]
 
     def finish(self, job_id: str, worker_id: str, token: str, status: str,
                output_filename: str | None = None) -> bool:
@@ -98,7 +131,8 @@ class DispatchStore:
 
     def expired(self) -> list[str]:
         with self._connect() as db:
-            rows = db.execute("""UPDATE yue_dispatch SET status = 'failed', updated_at = now()
+            rows = db.execute("""UPDATE yue_dispatch SET status = 'failed',
+                lease_token = NULL, lease_until = NULL, updated_at = now()
                 WHERE status = 'running' AND lease_until < now() AND attempts >= 3
                 RETURNING job_id""").fetchall()
             return [row[0] for row in rows]
@@ -106,7 +140,7 @@ class DispatchStore:
     def terminal(self) -> list[tuple[str, str, str | None]]:
         with self._connect() as db:
             return db.execute("""SELECT job_id, status, output_filename FROM yue_dispatch
-                WHERE status IN ('completed', 'failed')""").fetchall()
+                WHERE status IN ('completed', 'failed', 'cancelled')""").fetchall()
 
     def workers(self) -> list[dict[str, str]]:
         with self._connect() as db:

@@ -592,13 +592,24 @@ async def _reconcile_jobs(app: web.Application) -> None:
     while True:
         await asyncio.sleep(5)
         if app.get("dispatch") is not None:
-            for job_id in app["dispatch"].expired():
+            dispatch = app["dispatch"]
+            if hasattr(dispatch, "requeue_stale"):
+                for job_id in dispatch.requeue_stale():
+                    app["repository"].set_status(job_id, "queued")
+                    app["pending_progress"].pop(job_id, None)
+                    app["last_progress"].pop(job_id, None)
+                    job = app["repository"].get_job(job_id)
+                    if job:
+                        await _broadcast_job(app, job)
+            for job_id in dispatch.expired():
                 app["repository"].set_status(job_id, "failed", GENERIC_GENERATION_ERROR)
+                app["pending_progress"].pop(job_id, None)
+                app["last_progress"].pop(job_id, None)
                 _remove_source(app, job_id)
                 job = app["repository"].get_job(job_id)
                 if job:
                     await _broadcast_job(app, job)
-            for job_id, status, output_filename in app["dispatch"].terminal():
+            for job_id, status, output_filename in dispatch.terminal():
                 job = app["repository"].get_job(job_id)
                 if job is None or job.status in {"completed", "failed", "cancelled"}:
                     continue
@@ -606,8 +617,12 @@ async def _reconcile_jobs(app: web.Application) -> None:
                     filename = output_filename or job_id + ".mp3"
                     if (app["output_dir"] / filename).is_file():
                         app["repository"].set_output(job_id, filename=filename)
+                elif status == "cancelled":
+                    app["repository"].set_status(job_id, "cancelled")
+                    _remove_source(app, job_id)
                 else:
                     app["repository"].set_status(job_id, "failed", GENERIC_GENERATION_ERROR)
+                    _remove_source(app, job_id)
                 updated = app["repository"].get_job(job_id)
                 if updated:
                     await _broadcast_job(app, updated)
@@ -1152,14 +1167,73 @@ async def worker_fail(request: web.Request) -> web.Response:
     except Exception:
         return _error("Invalid failure report", 400)
     token = str(data.get("lease_token") or "")
-    if not request.app["dispatch"].finish(job_id, worker_id, token, "failed"):
+    requeue = bool(data.get("requeue", False))
+    dispatch = request.app["dispatch"]
+    if requeue and hasattr(dispatch, "requeue"):
+        success, outcome = dispatch.requeue(job_id, worker_id, token)
+        if not success:
+            return _error("Expired lease", 409)
+        if outcome == "requeued":
+            request.app["repository"].set_status(job_id, "queued")
+            request.app["pending_progress"].pop(job_id, None)
+            request.app["last_progress"].pop(job_id, None)
+            job = request.app["repository"].get_job(job_id)
+            if job:
+                await _broadcast_job(request.app, job)
+            return web.json_response({"ok": True, "status": "queued"})
+        else:
+            request.app["repository"].set_status(job_id, "failed", GENERIC_GENERATION_ERROR)
+            request.app["pending_progress"].pop(job_id, None)
+            request.app["last_progress"].pop(job_id, None)
+            _remove_source(request.app, job_id)
+            job = request.app["repository"].get_job(job_id)
+            if job:
+                await _broadcast_job(request.app, job)
+            return web.json_response({"ok": True, "status": "failed"})
+
+    if not dispatch.finish(job_id, worker_id, token, "failed"):
         return _error("Expired lease", 409)
     request.app["repository"].set_status(job_id, "failed", GENERIC_GENERATION_ERROR)
+    request.app["pending_progress"].pop(job_id, None)
+    request.app["last_progress"].pop(job_id, None)
     _remove_source(request.app, job_id)
     job = request.app["repository"].get_job(job_id)
     if job:
         await _broadcast_job(request.app, job)
-    return web.json_response({"ok": True})
+    return web.json_response({"ok": True, "status": "failed"})
+
+
+async def worker_requeue(request: web.Request) -> web.Response:
+    worker_id = _worker_identity(request)
+    if worker_id is None:
+        return _error("Unauthorized worker", 401)
+    job_id = request.match_info["job_id"]
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    token = str(data.get("lease_token") or request.headers.get("X-Yue-Lease", ""))
+    dispatch = request.app["dispatch"]
+    success, outcome = dispatch.requeue(job_id, worker_id, token)
+    if not success:
+        return _error("Expired lease", 409)
+    if outcome == "requeued":
+        request.app["repository"].set_status(job_id, "queued")
+        request.app["pending_progress"].pop(job_id, None)
+        request.app["last_progress"].pop(job_id, None)
+        job = request.app["repository"].get_job(job_id)
+        if job:
+            await _broadcast_job(request.app, job)
+        return web.json_response({"ok": True, "status": "queued"})
+    else:
+        request.app["repository"].set_status(job_id, "failed", GENERIC_GENERATION_ERROR)
+        request.app["pending_progress"].pop(job_id, None)
+        request.app["last_progress"].pop(job_id, None)
+        _remove_source(request.app, job_id)
+        job = request.app["repository"].get_job(job_id)
+        if job:
+            await _broadcast_job(request.app, job)
+        return web.json_response({"ok": True, "status": "failed"})
 
 
 async def list_jobs(request: web.Request) -> web.Response:
@@ -1326,6 +1400,46 @@ async def get_job(request: web.Request) -> web.Response:
     else:
         public = _public_library_job(job, repository)
     return web.json_response(public)
+
+
+async def cancel_job(request: web.Request) -> web.Response:
+    user = request["user"]
+    job_id = request.match_info["job_id"]
+    repository: Repository = request.app["repository"]
+    job = repository.get_job(job_id)
+    if job is None:
+        return _error("작업을 찾을 수 없습니다.", 404)
+    if not _may_manage(job, user):
+        return _error("권한이 없습니다.", 403)
+    if job.status == "running":
+        return _error("진행 중인 작업은 취소할 수 없습니다.", 409)
+    if job.status in {"completed", "failed", "cancelled"}:
+        return _error("이미 완료되었거나 종료된 작업입니다.", 400)
+    if job.status != "queued":
+        return _error("대기열에 있는 작업만 취소할 수 있습니다.", 400)
+
+    dispatch = request.app.get("dispatch")
+    if dispatch is not None:
+        if not dispatch.cancel(job_id):
+            status_info = dispatch.status(job_id)
+            if status_info and status_info[0] == "running":
+                repository.set_status(job_id, "running")
+                return _error("진행 중인 작업은 취소할 수 없습니다.", 409)
+    else:
+        if job.prompt_id:
+            client = request.app["comfy"]
+            if hasattr(client, "cancel_prompt"):
+                await client.cancel_prompt(job.prompt_id)
+            request.app["prompt_jobs"].pop(job.prompt_id, None)
+
+    repository.set_status(job_id, "cancelled")
+    request.app["pending_progress"].pop(job_id, None)
+    request.app["last_progress"].pop(job_id, None)
+    _remove_source(request.app, job_id)
+
+    updated = repository.get_job(job_id) or job
+    await _broadcast_job(request.app, updated)
+    return web.json_response(_public_job(updated, request.app.get("comfy")))
 
 
 async def library(request: web.Request) -> web.Response:
@@ -1854,6 +1968,8 @@ def create_app(
     app.router.add_get("/api/jobs", list_jobs)
     app.router.add_get("/api/events", job_events)
     app.router.add_get("/api/jobs/{job_id}", get_job)
+    app.router.add_post("/api/jobs/{job_id}/cancel", cancel_job)
+    app.router.add_post("/api/worker/jobs/{job_id}/requeue", worker_requeue)
     app.router.add_get("/api/queue", get_queue_status)
     app.router.add_get("/api/my/workers", list_my_workers)
     app.router.add_post("/api/my/workers", create_my_worker)

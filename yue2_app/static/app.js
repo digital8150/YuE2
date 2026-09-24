@@ -934,9 +934,11 @@
     const job = normalizeJob(raw);
     const index = state.jobs.findIndex((item) => item.id === job.id);
     const current = index < 0 ? null : state.jobs[index];
-    if (current && (isTerminal(current) && !isTerminal(job)
-      || current.status === "processing" && job.status === "queued")) return;
-    if (current && !job.progress && !isTerminal(job) && current.status === job.status) {
+        if (current && isTerminal(current) && !isTerminal(job)) return;
+    if (current && current.status === "processing" && job.status === "queued") {
+      job.progress = null;
+      pendingProgress.delete(job.id);
+    } else if (current && !job.progress && !isTerminal(job) && current.status === job.status) {
       job.progress = current.progress;
     }
     if (isTerminal(job)) pendingProgress.delete(job.id);
@@ -1202,6 +1204,27 @@
     }
   }
 
+  async function cancelJob(job) {
+    if (!job || !job.id) return;
+    if (job.status !== "queued") {
+      showToast("대기열에 있는 작업만 취소할 수 있습니다.", "error");
+      return;
+    }
+    const title = job.title || "음악";
+    const confirmed = window.confirm(`"${title}" 생성을 취소하시겠습니까?`);
+    if (!confirmed) return;
+    try {
+      const updated = await fetchJson(`/api/jobs/${encodeURIComponent(job.id)}/cancel`, {
+        method: "POST"
+      });
+      showToast("대기열에서 취소되었습니다.", "info");
+      if (updated) applyJobUpdate(updated);
+      if (typeof QueueManager !== "undefined") QueueManager.poll(true);
+    } catch (error) {
+      showToast(error.message || "취소하지 못했습니다.", "error");
+    }
+  }
+
   function createJobCard(job) {
     const statusClass = job.status === "completed" ? "is-complete" : job.status === "failed" ? "is-failed" : job.status === "cancelled" ? "is-cancelled" : "is-working";
     const title = element("h3", { className: "job-title", text: job.title });
@@ -1230,6 +1253,18 @@
 
     if (job.status === "failed") {
       copy.append(element("p", { className: "job-error", text: "곡을 만들지 못했습니다. 잠시 후 다시 시도해 주세요." }));
+    } else if (job.status === "queued") {
+      foot.append(element("button", {
+        className: "job-cancel-btn",
+        attrs: { type: "button", title: "대기열 취소" },
+        text: "대기열 취소",
+        on: {
+          click: (event) => {
+            event.stopPropagation();
+            cancelJob(job);
+          }
+        }
+      }));
     } else if (job.status === "completed") {
       const action = element("button", {
         className: "library-action",
@@ -2987,7 +3022,7 @@
 
     createPendingRow(job, position) {
       const modeLabel = job.mode === "cover" ? "커버" : "새 곡";
-      return element("div", { className: "queue-pending-row" }, [
+      const row = element("div", { className: "queue-pending-row" }, [
         element("div", { className: "queue-pending-pos", text: `#${position}` }),
         element("div", { className: "queue-pending-info" }, [
           element("div", { className: "queue-pending-title", text: job.title || "새로운 음악" }),
@@ -3001,6 +3036,22 @@
           ])
         ])
       ]);
+      if (job.is_mine) {
+        row.append(
+          element("button", {
+            className: "queue-pending-cancel-btn",
+            attrs: { type: "button", title: "대기열 취소" },
+            text: "취소",
+            on: {
+              click: (event) => {
+                event.stopPropagation();
+                cancelJob(job);
+              }
+            }
+          })
+        );
+      }
+      return row;
     },
 
     createRecentRow(track) {

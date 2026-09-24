@@ -242,6 +242,19 @@ class ComfyClient:
         }
         return prompt_id
 
+    async def cancel_prompt(self, prompt_id: str) -> bool:
+        session = await self._get_session()
+        self.clear_progress(prompt_id)
+        try:
+            async with session.post(
+                f"{self.base_url}/queue",
+                json={"delete": [prompt_id]},
+                timeout=self.timeout,
+            ) as response:
+                return response.status == 200
+        except Exception:
+            return False
+
     async def history(self, prompt_id: str) -> dict[str, Any]:
         session = await self._get_session()
         try:
