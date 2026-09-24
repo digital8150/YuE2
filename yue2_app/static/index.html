@@ -9,8 +9,8 @@
     <link rel="icon" type="image/svg+xml" href="static/favicon.svg" />
     <link rel="stylesheet" href="static/styles.css?v=20260924-instrumental" />
     <script src="static/auth.js" defer></script>
-    <script src="static/prompt_assistant.js?v=20260924-instrumental" defer></script>
-    <script src="static/app.js?v=20260924-instrumental" defer></script>
+    <script src="static/prompt_assistant.js?v=20260924-timed-plan" defer></script>
+    <script src="static/app.js?v=20260924-timed-plan" defer></script>
     <script src="static/backoffice.js" defer></script>
   </head>
   <body>
@@ -130,7 +130,7 @@
                   <section class="prompt-assistant" id="prompt-assistant" aria-labelledby="prompt-assistant-title">
                     <div class="prompt-assistant-heading"><h2 id="prompt-assistant-title">아이디어로 초안 만들기</h2></div>
                     <label class="field-label" for="prompt-idea">곡 아이디어</label>
-                    <textarea class="text-area prompt-idea" id="prompt-idea" rows="3" maxlength="1500" placeholder="예: 비 오는 서울 밤거리의 그리움을 담은 느린 인디 팝. 여성 보컬, 피아노와 잔잔한 드럼"></textarea>
+                    <textarea class="text-area prompt-idea" id="prompt-idea" rows="3" maxlength="1500" placeholder="예: 비 오는 서울 밤거리의 느린 인디 팝, 여성 보컬과 피아노&#10;또는 2분 30초 타깃의 오케스트라 연주곡"></textarea>
                     <div class="prompt-assistant-actions">
                       <label for="prompt-language">가사 언어</label>
                       <select id="prompt-language" aria-label="생성할 가사 언어">
@@ -142,7 +142,8 @@
                     <p class="prompt-assistant-status" id="prompt-status" role="status" aria-live="polite" hidden></p>
                     <div class="prompt-assistant-result" id="prompt-result" hidden>
                       <strong>생성된 초안</strong>
-                      <div class="prompt-assistant-preview" tabindex="0" aria-label="생성된 곡 제목, 스타일과 가사">
+                      <div class="prompt-assistant-preview" tabindex="0" aria-label="생성된 곡 종류, 제목, 스타일과 가사 또는 연주 구조">
+                        <p id="prompt-result-mode"></p>
                         <p class="prompt-assistant-title"><strong>곡 제목</strong> <span id="prompt-result-title"></span></p>
                         <p id="prompt-result-style"></p>
                         <pre id="prompt-result-lyrics"></pre>

@@ -3037,11 +3037,15 @@
     promptAssistant = window.YuE2PromptAssistant?.init({
       getMode: () => state.mode,
       isInstrumental: () => state.instrumental,
-      applyDraft: ({ title, style, lyrics }) => {
-        setInstrumental(!lyrics, false);
+      applyDraft: ({ title, style, lyrics, instrumental, durationSeconds }) => {
+        setInstrumental(instrumental, false);
         refs.trackTitle.value = title;
         refs.styleInput.value = style;
-        refs.lyricsInput.value = lyrics || (state.instrumental ? "[instrumental]" : "");
+        refs.lyricsInput.value = lyrics;
+        if (durationSeconds !== null && Number.isInteger(durationSeconds) && durationSeconds >= 10 && durationSeconds <= 900) {
+          refs.durationInput.value = String(durationSeconds);
+          durationByMode[state.mode] = refs.durationInput.value;
+        }
         clearFieldError(refs.styleInput, refs.styleError);
         updateLyricsCount();
         saveComposer();
