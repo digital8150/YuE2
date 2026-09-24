@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import urljoin
@@ -60,19 +61,24 @@ class Worker:
             Path(path).unlink(missing_ok=True)
 
     async def _heartbeat(self, job: dict, prompt_id: str | None, stop: asyncio.Event) -> None:
+        last_progress: dict | None = None
+        last_sent = -float("inf")
         while not stop.is_set():
             progress = self.comfy.progress_for(prompt_id) if prompt_id else None
+            if progress != last_progress or time.monotonic() - last_sent >= 10:
+                try:
+                    await self._post("/api/worker/heartbeat", {
+                        "job_id": job["job_id"], "lease_token": job["lease_token"], "progress": progress,
+                    })
+                    last_progress = dict(progress) if progress else None
+                    last_sent = time.monotonic()
+                except aiohttp.ClientResponseError as error:
+                    if error.status == 409:
+                        raise RuntimeError("work lease expired") from error
+                except (aiohttp.ClientError, asyncio.TimeoutError):
+                    pass
             try:
-                await self._post("/api/worker/heartbeat", {
-                    "job_id": job["job_id"], "lease_token": job["lease_token"], "progress": progress,
-                })
-            except aiohttp.ClientResponseError as error:
-                if error.status == 409:
-                    raise RuntimeError("work lease expired") from error
-            except (aiohttp.ClientError, asyncio.TimeoutError):
-                pass
-            try:
-                await asyncio.wait_for(stop.wait(), 15)
+                await asyncio.wait_for(stop.wait(), 2)
             except asyncio.TimeoutError:
                 pass
 
@@ -155,7 +161,7 @@ class Worker:
                         continue
                     job = claimed.get("job")
                     if not job:
-                        await asyncio.sleep(5)
+                        await asyncio.sleep(3)
                         continue
                     print("Starting job", job["job_id"], flush=True)
                     try:

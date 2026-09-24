@@ -116,12 +116,21 @@ class DispatchStore:
                 LEFT JOIN LATERAL (SELECT job_id, progress FROM yue_dispatch
                     WHERE worker_id = w.worker_id AND status = 'running' AND lease_until > now()
                     ORDER BY updated_at DESC LIMIT 1) d ON true
-                WHERE w.last_seen > now() - interval '2 minutes'
+                WHERE w.last_seen > now() - interval '45 seconds'
                     AND (c.worker_id IS NULL OR c.revoked_at IS NULL)
                 ORDER BY c.name NULLS LAST, w.worker_id""").fetchall()
             return [{"worker_id": r[0], "name": r[1], "device": r[2] or "",
                      "vram": r[3] or "", "status": "busy" if r[4] else "idle",
                      "progress": r[5] if r[4] else None} for r in rows]
+
+    def progress_for_jobs(self, job_ids: list[str]) -> dict[str, dict[str, Any]]:
+        if not job_ids:
+            return {}
+        with self._connect() as db:
+            rows = db.execute("""SELECT job_id, progress FROM yue_dispatch
+                WHERE job_id = ANY(%s) AND status = 'running'
+                    AND lease_until > now() AND progress IS NOT NULL""", (job_ids,)).fetchall()
+        return {job_id: progress for job_id, progress in rows}
 
     def create_credential(self, owner_id: int, name: str) -> dict[str, str]:
         worker_id = "gpu-" + secrets.token_hex(12)

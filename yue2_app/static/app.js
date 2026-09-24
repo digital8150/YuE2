@@ -2777,7 +2777,7 @@
       if (this.pollTimer) window.clearTimeout(this.pollTimer);
       const active = (state.queue.summary?.total_active || 0) > 0
         || (state.queue.workers || []).some((worker) => worker.status === "busy");
-      const delay = document.hidden ? 30000 : active ? 5000 : 10000;
+      const delay = document.hidden ? 30000 : active ? 3000 : 5000;
       this.pollTimer = window.setTimeout(() => {
         this.pollTimer = null;
         this.poll();

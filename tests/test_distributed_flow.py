@@ -39,6 +39,8 @@ class MemoryDispatch:
         valid = bool(job and job["status"] == "running" and job["worker_id"] == worker_id and job["token"] == token)
         if valid and worker_id in self.connected:
             self.connected[worker_id]["progress"] = progress
+            if progress is not None:
+                job["progress"] = progress
         return valid
 
     def finish(self, job_id, worker_id, token, status, output_filename=None):
@@ -52,6 +54,11 @@ class MemoryDispatch:
 
     def workers(self):
         return list(self.connected.values())
+
+    def progress_for_jobs(self, job_ids):
+        return {job_id: self.jobs[job_id]["progress"] for job_id in job_ids
+                if job_id in self.jobs and self.jobs[job_id]["status"] == "running"
+                and self.jobs[job_id].get("progress")}
 
     def create_credential(self, owner_id, name):
         worker_id = "gpu-" + secrets.token_hex(12)
@@ -171,8 +178,14 @@ class DistributedFlowTests(unittest.IsolatedAsyncioTestCase):
             "job_id": job_id, "lease_token": "lease", "progress": {"phase": "music", "rate": 12.5}}, headers=headers)
         self.assertEqual(heartbeat.status, 200)
         queue = await self.client.get("/api/queue")
-        worker = (await queue.json())["workers"][0]
+        queue_data = await queue.json()
+        worker = queue_data["workers"][0]
         self.assertEqual((worker["status"], worker["progress"]), ("busy", {"phase": "music", "rate": 12.5}))
+        self.assertEqual(queue_data["running"][0]["progress"], {"phase": "music", "rate": 12.5})
+        jobs = await self.client.get("/api/jobs")
+        self.assertEqual((await jobs.json())[0]["progress"], {"phase": "music", "rate": 12.5})
+        detail = await self.client.get(f"/api/jobs/{job_id}")
+        self.assertEqual((await detail.json())["progress"], {"phase": "music", "rate": 12.5})
 
         auth.create_user("member2", "Other", "strong-password-123", status="approved")
         other_login = await self.client.post("/api/auth/login", json={"username": "member2", "password": "strong-password-123"})

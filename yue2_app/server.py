@@ -378,6 +378,17 @@ def _public_job(job: Job, client: ComfyClient | None = None) -> dict[str, Any]:
     return result
 
 
+def _attach_dispatch_progress(app: web.Application, jobs: list[dict[str, Any]]) -> None:
+    dispatch = app.get("dispatch")
+    if dispatch is None:
+        return
+    running_ids = [job["id"] for job in jobs if job["status"] == "running"]
+    progress_by_id = dispatch.progress_for_jobs(running_ids)
+    for job in jobs:
+        if progress := progress_by_id.get(job["id"]):
+            job["progress"] = progress
+
+
 def _public_library_job(job: Job, repository: Repository | None = None) -> dict[str, Any]:
     result = _public_job(job)
     result["title"] = job.published_title or result["title"]
@@ -522,7 +533,9 @@ async def _broadcast(app: web.Application, payload: dict[str, Any]) -> None:
 
 
 async def _broadcast_job(app: web.Application, job: Job) -> None:
-    await _broadcast(app, {"type": "job", "job": _public_job(job, app["comfy"])})
+    public = _public_job(job, app["comfy"])
+    _attach_dispatch_progress(app, [public])
+    await _broadcast(app, {"type": "job", "job": public})
 
 
 def _on_comfy_event(app: web.Application, event: dict[str, Any]) -> None:
@@ -1087,7 +1100,8 @@ async def worker_heartbeat(request: web.Request) -> web.Response:
         return _error("Invalid progress", 400)
     if not request.app["dispatch"].heartbeat(job_id, worker_id, token, progress):
         return _error("Expired lease", 409)
-    if progress:
+    if progress and progress != request.app["pending_progress"].get(
+            job_id, request.app["last_progress"].get(job_id)):
         request.app["pending_progress"][job_id] = progress
     return web.json_response({"ok": True})
 
@@ -1169,6 +1183,7 @@ async def list_jobs(request: web.Request) -> web.Response:
     has_more = (offset + len(jobs)) < total
 
     public_jobs = [_public_job(job, request.app["comfy"]) for job in jobs]
+    _attach_dispatch_progress(request.app, public_jobs)
 
     if request.query.get("paged") in {"1", "true"}:
         return web.json_response({
@@ -1231,6 +1246,7 @@ async def get_queue_status(request: web.Request) -> web.Response:
             running_list.append(pub)
         else:
             pending_list.append(pub)
+    _attach_dispatch_progress(request.app, running_list)
 
     def pending_sort_key(item: dict[str, Any]) -> int:
         pid = item.get("prompt_id")
@@ -1304,7 +1320,12 @@ async def get_job(request: web.Request) -> web.Response:
     if job is None or not _may_read(job, request["user"]):
         return _error("작업을 찾을 수 없습니다.", 404)
     job = await _sync_job(request.app, job)
-    return web.json_response(_public_job(job, request.app["comfy"]) if _may_manage(job, request["user"]) else _public_library_job(job, repository))
+    if _may_manage(job, request["user"]):
+        public = _public_job(job, request.app["comfy"])
+        _attach_dispatch_progress(request.app, [public])
+    else:
+        public = _public_library_job(job, repository)
+    return web.json_response(public)
 
 
 async def library(request: web.Request) -> web.Response:
